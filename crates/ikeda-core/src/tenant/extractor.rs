@@ -1,4 +1,5 @@
 use super::context::{AuthSource, TenantContext};
+use super::jwt::JwtValidator;
 use super::validator::{hash_api_key, ApiKeyValidator};
 use crate::error::AppError;
 use axum::{
@@ -17,6 +18,7 @@ impl<S> FromRequestParts<S> for TenantContext
 where
     S: Send + Sync,
     Arc<dyn ApiKeyValidator>: FromRef<S>,
+    Option<Arc<dyn JwtValidator>>: FromRef<S>,
 {
     type Rejection = AppError;
 
@@ -45,7 +47,7 @@ where
             ));
         }
 
-        // 2. Authorization Bearer header (reserved for JWT/JWKS in future phases)
+        // 2. Authorization Bearer header validated via optional JwtValidator port
         if let Some(auth_header) = parts.headers.get(header::AUTHORIZATION) {
             let auth_str = auth_header.to_str().map_err(|_| {
                 AppError::Unauthorized(
@@ -53,10 +55,28 @@ where
                 )
             })?;
 
-            if let Some(_token) = auth_str.strip_prefix("Bearer ") {
-                return Err(AppError::Unauthorized(
-                    "Bearer token authentication via JWT/JWKS is not yet configured".to_string(),
-                ));
+            if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                let token = token.trim();
+                if token.is_empty() {
+                    return Err(AppError::Unauthorized(
+                        "Authorization Bearer token is empty".to_string(),
+                    ));
+                }
+
+                let jwt_validator = Option::<Arc<dyn JwtValidator>>::from_ref(state);
+                let Some(validator) = jwt_validator else {
+                    return Err(AppError::Unauthorized(
+                        "Bearer token authentication via JWT/JWKS is not configured on this service".to_string(),
+                    ));
+                };
+
+                let user = validator.validate_token(token).await?;
+                return Ok(Self {
+                    tenant_id: user.tenant_id,
+                    user_id: Some(user.user_id),
+                    scopes: user.scopes,
+                    auth_source: AuthSource::Jwt,
+                });
             }
 
             return Err(AppError::Unauthorized(

@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "crates/ikeda-core",
     "services/events-api",
+    "services/crm-api",
+    "services/identity-api",
 ]
 
 [workspace.package]
@@ -18,7 +20,7 @@ axum = { version = "0.8", features = ["macros"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors", "trace", "timeout"] }
 async-trait = "0.1"
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "form", "rustls"] }
 
 # OpenAPI Specification
 utoipa = { version = "5.3", features = ["axum_extras", "chrono", "uuid"] }
@@ -34,6 +36,7 @@ rrule = { version = "0.14", features = ["serde"] }
 # Cryptography & Hashing
 sha2 = "0.10"
 hex = "0.4"
+jsonwebtoken = "9"
 
 # Serialization & Data Formats
 serde = { version = "1.0", features = ["derive"] }

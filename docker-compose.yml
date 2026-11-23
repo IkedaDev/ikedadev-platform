@@ -16,8 +16,8 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # Ejecuta automáticamente la migración SQL al iniciar por primera vez
       - ./services/events-api/migrations/20261123000001_create_events_schema.sql:/docker-entrypoint-initdb.d/01_create_events_schema.sql:ro
+      - ./services/events-api/migrations/20261123000002_security_and_operations.sql:/docker-entrypoint-initdb.d/02_security_and_operations.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d events_db"]
       interval: 3s
@@ -26,7 +26,7 @@ services:
       start_period: 3s
 
   # ============================================================================
-  # 2. Events API (Rust Axum Microservice)
+  # 2. Events API (Rust Axum Microservice - Port 8080)
   # ============================================================================
   events-api:
     container_name: ikedadev-events-api
@@ -47,6 +47,69 @@ services:
       QSTASH_TOKEN: "mock-dev-token"
     ports:
       - "8080:8080"
+
+  # ============================================================================
+  # 3. CRM API (Optional Profile: full - Port 8081)
+  # ============================================================================
+  crm-api:
+    container_name: ikedadev-crm-api
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: services/crm-api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: "8081"
+      HOST: "0.0.0.0"
+      DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/crm_db?sslmode=disable"
+      RUST_LOG: "info,crm_api=debug,tower_http=info"
+    ports:
+      - "8081:8081"
+
+  # ============================================================================
+  # 4. Identity API (Optional Profile: full - Port 8082)
+  # ============================================================================
+  identity-api:
+    container_name: ikedadev-identity-api
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: services/identity-api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: "8082"
+      HOST: "0.0.0.0"
+      DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/identity_db?sslmode=disable"
+      KEYCLOAK_BASE_URL: "http://keycloak:8080"
+      KEYCLOAK_REALM: "ikeda"
+      KEYCLOAK_CLIENT_ID: "identity-api-admin"
+      KEYCLOAK_CLIENT_SECRET: ""
+      RUST_LOG: "info,identity_api=debug,tower_http=info"
+    ports:
+      - "8082:8082"
+
+  # ============================================================================
+  # 5. Keycloak Dev Server (Optional Profile: keycloak / full - Port 8180)
+  #    Start with: docker compose --profile keycloak up -d
+  # ============================================================================
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: ikedadev-keycloak
+    profiles: ["keycloak", "full"]
+    command: start-dev
+    restart: unless-stopped
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin_dev_password
+      KC_HTTP_ENABLED: "true"
+    ports:
+      - "8180:8080"
 
 volumes:
   postgres_data:

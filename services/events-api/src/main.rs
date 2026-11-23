@@ -47,7 +47,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let calendar_repo = Arc::new(infrastructure::SqlxCalendarRepository::new(pool.clone()));
     let event_repo = Arc::new(infrastructure::SqlxEventRepository::new(pool.clone()));
     let api_key_validator = Arc::new(infrastructure::SqlxApiKeyValidator::new(pool));
-    let state = presentation::AppState::new(calendar_repo, event_repo, api_key_validator);
+    let mut state = presentation::AppState::new(calendar_repo, event_repo, api_key_validator);
+
+    // Optional Keycloak / OIDC JWKS JWT validation
+    if let (Ok(jwks_uri), Ok(jwt_issuer)) = (std::env::var("JWKS_URI"), std::env::var("JWT_ISSUER"))
+    {
+        if !jwks_uri.trim().is_empty() && !jwt_issuer.trim().is_empty() {
+            let mut jwks_config = ikeda_core::tenant::JwksConfig::new(jwks_uri, jwt_issuer);
+            if let Ok(aud) = std::env::var("JWT_AUDIENCE") {
+                if !aud.trim().is_empty() {
+                    jwks_config = jwks_config.with_audience(aud);
+                }
+            }
+            let jwt_validator = ikeda_core::tenant::JwksJwtValidator::new(jwks_config)?;
+            state = state.with_jwt_validator(Arc::new(jwt_validator));
+            tracing::info!("Keycloak/OIDC JWKS JWT validator enabled.");
+        }
+    }
 
     // 5. Configure middleware layers (CORS, Request Tracing)
     let cors = CorsLayer::new()

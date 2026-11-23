@@ -2,6 +2,7 @@ use super::context::{AuthSource, TenantContext};
 use super::extractor::{HEADER_API_KEY, HEADER_TENANT_ID};
 #[cfg(feature = "dev-auth")]
 use super::extractor::{HEADER_SCOPES, HEADER_USER_ID};
+use super::jwt::{JwksConfig, JwksJwtValidator, JwtValidator};
 use super::validator::{hash_api_key, ApiKeyValidator, AuthenticatedKey};
 use crate::error::AppError;
 use async_trait::async_trait;
@@ -10,6 +11,20 @@ use axum::{
     extract::FromRequestParts,
     http::{header, Request},
 };
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use chrono::Utc;
+use jsonwebtoken::{
+    encode,
+    jwk::{AlgorithmParameters, CommonParameters, Jwk, JwkSet, KeyAlgorithm, RSAKeyParameters},
+    Algorithm, EncodingKey, Header,
+};
+use rand::rngs::OsRng;
+use rsa::{
+    pkcs1::{EncodeRsaPrivateKey, LineEnding},
+    traits::PublicKeyParts,
+    RsaPrivateKey, RsaPublicKey,
+};
+use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -45,11 +60,80 @@ impl ApiKeyValidator for MockApiKeyValidator {
 #[derive(Clone)]
 struct TestAppState {
     validator: Arc<dyn ApiKeyValidator>,
+    jwt_validator: Option<Arc<dyn JwtValidator>>,
+}
+
+impl TestAppState {
+    fn new(validator: Arc<dyn ApiKeyValidator>) -> Self {
+        Self {
+            validator,
+            jwt_validator: None,
+        }
+    }
+
+    fn with_jwt(mut self, jwt_validator: Arc<dyn JwtValidator>) -> Self {
+        self.jwt_validator = Some(jwt_validator);
+        self
+    }
 }
 
 impl axum::extract::FromRef<TestAppState> for Arc<dyn ApiKeyValidator> {
     fn from_ref(state: &TestAppState) -> Self {
         state.validator.clone()
+    }
+}
+
+impl axum::extract::FromRef<TestAppState> for Option<Arc<dyn JwtValidator>> {
+    fn from_ref(state: &TestAppState) -> Self {
+        state.jwt_validator.clone()
+    }
+}
+
+struct TestRsaKeyPair {
+    kid: String,
+    encoding_key: EncodingKey,
+    jwk_set: JwkSet,
+}
+
+impl TestRsaKeyPair {
+    fn generate(kid: &str) -> Self {
+        let mut rng = OsRng;
+        let priv_key = RsaPrivateKey::new(&mut rng, 2048).expect("failed to generate RSA key");
+        let pub_key = RsaPublicKey::from(&priv_key);
+
+        let pem = priv_key
+            .to_pkcs1_pem(LineEnding::LF)
+            .expect("failed to encode private key to PEM");
+        let encoding_key =
+            EncodingKey::from_rsa_pem(pem.as_bytes()).expect("failed to create EncodingKey");
+
+        let n = URL_SAFE_NO_PAD.encode(pub_key.n().to_bytes_be());
+        let e = URL_SAFE_NO_PAD.encode(pub_key.e().to_bytes_be());
+
+        let jwk = Jwk {
+            common: CommonParameters {
+                key_id: Some(kid.to_string()),
+                key_algorithm: Some(KeyAlgorithm::RS256),
+                ..Default::default()
+            },
+            algorithm: AlgorithmParameters::RSA(RSAKeyParameters {
+                key_type: Default::default(),
+                n,
+                e,
+            }),
+        };
+
+        Self {
+            kid: kid.to_string(),
+            encoding_key,
+            jwk_set: JwkSet { keys: vec![jwk] },
+        }
+    }
+
+    fn sign(&self, claims: &serde_json::Value) -> String {
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some(self.kid.clone());
+        encode(&header, claims, &self.encoding_key).expect("failed to sign JWT")
     }
 }
 
@@ -88,6 +172,191 @@ fn test_hash_api_key_deterministic() {
 }
 
 #[tokio::test]
+async fn test_jwks_valid_token_extracts_user_tenant_and_scopes() {
+    let kp = TestRsaKeyPair::generate("test-kid-1");
+    let issuer = "https://auth.ikedadev.com/realms/ikeda";
+    let config = JwksConfig::new("", issuer);
+    let validator =
+        JwksJwtValidator::with_static_jwks(config, kp.jwk_set.clone()).expect("validator init");
+
+    let tenant_id = Uuid::new_v4();
+    let user_id = Uuid::new_v4();
+    let exp = (Utc::now().timestamp() + 600) as usize;
+
+    let claims = json!({
+        "iss": issuer,
+        "sub": user_id.to_string(),
+        "tenant_id": tenant_id.to_string(),
+        "exp": exp,
+        "scope": "openid profile events:read",
+        "realm_access": {
+            "roles": ["tenant:admin", "events:read", "crm:write"]
+        }
+    });
+
+    let token = kp.sign(&claims);
+    let user = validator
+        .validate_token(&token)
+        .await
+        .expect("valid token should succeed");
+
+    assert_eq!(user.tenant_id, tenant_id);
+    assert_eq!(user.user_id, user_id);
+    assert!(user.scopes.contains(&"openid".to_string()));
+    assert!(user.scopes.contains(&"events:read".to_string()));
+    assert!(user.scopes.contains(&"tenant:admin".to_string()));
+    assert!(user.scopes.contains(&"crm:write".to_string()));
+    // Deduplicated: `events:read` appears only once
+    assert_eq!(
+        user.scopes
+            .iter()
+            .filter(|s| s.as_str() == "events:read")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn test_jwks_expired_token_returns_unauthorized() {
+    let kp = TestRsaKeyPair::generate("test-kid-exp");
+    let issuer = "https://auth.ikedadev.com/realms/ikeda";
+    let config = JwksConfig::new("", issuer);
+    let validator =
+        JwksJwtValidator::with_static_jwks(config, kp.jwk_set.clone()).expect("validator init");
+
+    let claims = json!({
+        "iss": issuer,
+        "sub": Uuid::new_v4().to_string(),
+        "tenant_id": Uuid::new_v4().to_string(),
+        "exp": (Utc::now().timestamp() - 300) as usize,
+    });
+
+    let token = kp.sign(&claims);
+    let err = validator
+        .validate_token(&token)
+        .await
+        .expect_err("expired token must fail");
+
+    assert!(matches!(err, AppError::Unauthorized(_)));
+}
+
+#[tokio::test]
+async fn test_jwks_invalid_signature_returns_unauthorized() {
+    let trusted_kp = TestRsaKeyPair::generate("shared-kid");
+    let attacker_kp = TestRsaKeyPair::generate("shared-kid");
+    let issuer = "https://auth.ikedadev.com/realms/ikeda";
+    let config = JwksConfig::new("", issuer);
+    let validator = JwksJwtValidator::with_static_jwks(config, trusted_kp.jwk_set.clone())
+        .expect("validator init");
+
+    let claims = json!({
+        "iss": issuer,
+        "sub": Uuid::new_v4().to_string(),
+        "tenant_id": Uuid::new_v4().to_string(),
+        "exp": (Utc::now().timestamp() + 600) as usize,
+    });
+
+    let forged_token = attacker_kp.sign(&claims);
+    let err = validator
+        .validate_token(&forged_token)
+        .await
+        .expect_err("forged signature must fail");
+
+    assert!(matches!(err, AppError::Unauthorized(_)));
+}
+
+#[tokio::test]
+async fn test_jwks_missing_tenant_id_claim_returns_unauthorized() {
+    let kp = TestRsaKeyPair::generate("test-kid-no-tenant");
+    let issuer = "https://auth.ikedadev.com/realms/ikeda";
+    let config = JwksConfig::new("", issuer);
+    let validator =
+        JwksJwtValidator::with_static_jwks(config, kp.jwk_set.clone()).expect("validator init");
+
+    let claims = json!({
+        "iss": issuer,
+        "sub": Uuid::new_v4().to_string(),
+        "exp": (Utc::now().timestamp() + 600) as usize,
+    });
+
+    let token = kp.sign(&claims);
+    let err = validator
+        .validate_token(&token)
+        .await
+        .expect_err("token without tenant_id claim must fail");
+
+    match err {
+        AppError::Unauthorized(msg) => assert!(msg.contains("tenant_id")),
+        other => panic!("expected Unauthorized, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn test_jwks_wrong_issuer_returns_unauthorized() {
+    let kp = TestRsaKeyPair::generate("test-kid-iss");
+    let config = JwksConfig::new("", "https://auth.ikedadev.com/realms/ikeda");
+    let validator =
+        JwksJwtValidator::with_static_jwks(config, kp.jwk_set.clone()).expect("validator init");
+
+    let claims = json!({
+        "iss": "https://evil.example.com/realms/other",
+        "sub": Uuid::new_v4().to_string(),
+        "tenant_id": Uuid::new_v4().to_string(),
+        "exp": (Utc::now().timestamp() + 600) as usize,
+    });
+
+    let token = kp.sign(&claims);
+    let err = validator
+        .validate_token(&token)
+        .await
+        .expect_err("wrong issuer must fail");
+
+    assert!(matches!(err, AppError::Unauthorized(_)));
+}
+
+#[tokio::test]
+async fn test_extractor_with_valid_bearer_jwt_ignores_spoofed_tenant_header() {
+    let kp = TestRsaKeyPair::generate("extractor-kid");
+    let issuer = "https://auth.ikedadev.com/realms/ikeda";
+    let config = JwksConfig::new("", issuer);
+    let jwt_validator =
+        JwksJwtValidator::with_static_jwks(config, kp.jwk_set.clone()).expect("validator init");
+
+    let state =
+        TestAppState::new(Arc::new(MockApiKeyValidator::new())).with_jwt(Arc::new(jwt_validator));
+
+    let real_tenant_id = Uuid::new_v4();
+    let spoofed_tenant_id = Uuid::new_v4();
+    let user_id = Uuid::new_v4();
+
+    let claims = json!({
+        "iss": issuer,
+        "sub": user_id.to_string(),
+        "tenant_id": real_tenant_id.to_string(),
+        "exp": (Utc::now().timestamp() + 600) as usize,
+        "realm_access": { "roles": ["tenant:admin"] }
+    });
+    let token = kp.sign(&claims);
+
+    let req = Request::builder()
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(HEADER_TENANT_ID, spoofed_tenant_id.to_string())
+        .body(Body::empty())
+        .expect("request build failed");
+
+    let (mut parts, _) = req.into_parts();
+    let ctx = TenantContext::from_request_parts(&mut parts, &state)
+        .await
+        .expect("extractor should succeed with valid JWT");
+
+    assert_eq!(ctx.tenant_id, real_tenant_id);
+    assert_ne!(ctx.tenant_id, spoofed_tenant_id);
+    assert_eq!(ctx.user_id, Some(user_id));
+    assert_eq!(ctx.auth_source, AuthSource::Jwt);
+    assert!(ctx.has_scope("tenant:admin"));
+}
+
+#[tokio::test]
 async fn test_extractor_with_valid_api_key_ignores_spoofed_tenant_header() {
     let mut mock = MockApiKeyValidator::new();
     let real_tenant_id = Uuid::new_v4();
@@ -95,9 +364,7 @@ async fn test_extractor_with_valid_api_key_ignores_spoofed_tenant_header() {
     let raw_key = "ikeda_live_valid_key_999";
 
     mock.add_key(raw_key, real_tenant_id, vec!["events:write".into()]);
-    let state = TestAppState {
-        validator: Arc::new(mock),
-    };
+    let state = TestAppState::new(Arc::new(mock));
 
     let req = Request::builder()
         .header(HEADER_API_KEY, raw_key)
@@ -119,10 +386,7 @@ async fn test_extractor_with_valid_api_key_ignores_spoofed_tenant_header() {
 
 #[tokio::test]
 async fn test_extractor_with_invalid_api_key_returns_unauthorized() {
-    let mock = MockApiKeyValidator::new();
-    let state = TestAppState {
-        validator: Arc::new(mock),
-    };
+    let state = TestAppState::new(Arc::new(MockApiKeyValidator::new()));
 
     let req = Request::builder()
         .header(HEADER_API_KEY, "invalid_or_revoked_key")
@@ -144,10 +408,7 @@ async fn test_extractor_with_invalid_api_key_returns_unauthorized() {
 
 #[tokio::test]
 async fn test_extractor_without_credentials_returns_unauthorized() {
-    let mock = MockApiKeyValidator::new();
-    let state = TestAppState {
-        validator: Arc::new(mock),
-    };
+    let state = TestAppState::new(Arc::new(MockApiKeyValidator::new()));
 
     let req = Request::builder()
         .body(Body::empty())
@@ -165,11 +426,8 @@ async fn test_extractor_without_credentials_returns_unauthorized() {
 }
 
 #[tokio::test]
-async fn test_extractor_bearer_returns_unauthorized_not_configured() {
-    let mock = MockApiKeyValidator::new();
-    let state = TestAppState {
-        validator: Arc::new(mock),
-    };
+async fn test_extractor_bearer_returns_unauthorized_when_jwt_validator_not_configured() {
+    let state = TestAppState::new(Arc::new(MockApiKeyValidator::new()));
 
     let req = Request::builder()
         .header(header::AUTHORIZATION, "Bearer some.jwt.token")
@@ -179,11 +437,11 @@ async fn test_extractor_bearer_returns_unauthorized_not_configured() {
     let (mut parts, _) = req.into_parts();
     let err = TenantContext::from_request_parts(&mut parts, &state)
         .await
-        .expect_err("should reject bearer token before jwt configured");
+        .expect_err("should reject bearer token when jwt validator is None");
 
     match err {
         AppError::Unauthorized(msg) => {
-            assert!(msg.contains("JWT/JWKS is not yet configured"));
+            assert!(msg.contains("JWT/JWKS is not configured"));
         }
         other => panic!("expected Unauthorized, got {other:?}"),
     }
@@ -192,10 +450,7 @@ async fn test_extractor_bearer_returns_unauthorized_not_configured() {
 #[cfg(not(feature = "dev-auth"))]
 #[tokio::test]
 async fn test_extractor_without_dev_auth_ignores_plain_tenant_header() {
-    let mock = MockApiKeyValidator::new();
-    let state = TestAppState {
-        validator: Arc::new(mock),
-    };
+    let state = TestAppState::new(Arc::new(MockApiKeyValidator::new()));
 
     let req = Request::builder()
         .header(HEADER_TENANT_ID, Uuid::new_v4().to_string())
@@ -218,10 +473,7 @@ async fn test_extractor_without_dev_auth_ignores_plain_tenant_header() {
 #[cfg(feature = "dev-auth")]
 #[tokio::test]
 async fn test_extractor_with_dev_auth_feature_allows_dev_headers() {
-    let mock = MockApiKeyValidator::new();
-    let state = TestAppState {
-        validator: Arc::new(mock),
-    };
+    let state = TestAppState::new(Arc::new(MockApiKeyValidator::new()));
     let tenant_id = Uuid::new_v4();
     let user_id = Uuid::new_v4();
 

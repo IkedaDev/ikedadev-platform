@@ -21,7 +21,12 @@ tracing = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 async-trait = { workspace = true }
+jsonwebtoken = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true }
 tower = { workspace = true }
+rsa = { version = "0.9", features = ["pem", "sha2"] }
+rand = "0.8"
+base64 = "0.22"

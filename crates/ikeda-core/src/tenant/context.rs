@@ -11,7 +11,7 @@ pub enum AuthSource {
     /// Development/Mock headers (e.g. `X-Tenant-Id`, `X-User-Id`, `X-Scopes`).
     DevHeaders,
     /// Standard Bearer JWT token validated via JWKS.
-    BearerJwt,
+    Jwt,
     /// Tenant or service API Key (`X-Api-Key`).
     ApiKey,
 }
