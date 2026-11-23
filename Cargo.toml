@@ -31,6 +31,10 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio",
 # Recurrence Rule (RFC 5545)
 rrule = { version = "0.14", features = ["serde"] }
 
+# Cryptography & Hashing
+sha2 = "0.10"
+hex = "0.4"
+
 # Serialization & Data Formats
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

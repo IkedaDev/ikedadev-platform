@@ -5,6 +5,10 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[features]
+default = []
+dev-auth = []
+
 [dependencies]
 axum = { workspace = true }
 utoipa = { workspace = true }
@@ -14,6 +18,9 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+async-trait = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
