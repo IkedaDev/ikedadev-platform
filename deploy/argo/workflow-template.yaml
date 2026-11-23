@@ -1,0 +1,55 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: events-api-ci-cd
+  namespace: argo
+spec:
+  entrypoint: pipeline
+  arguments:
+    parameters:
+      - name: git-repo
+        value: "https://github.com/ikedadev/ikedadev-platform.git"
+      - name: git-revision
+        value: "main"
+      - name: image-tag
+        value: "latest"
+  templates:
+    - name: pipeline
+      dag:
+        tasks:
+          - name: run-tests
+            template: cargo-test
+          - name: build-and-push
+            depends: "run-tests"
+            template: kaniko-build
+          - name: sync-gitops
+            depends: "build-and-push"
+            template: kustomize-sync
+
+    - name: cargo-test
+      container:
+        image: rust:1.85-bookworm
+        command: [sh, -c]
+        args:
+          - |
+            cargo fmt --all -- --check &&
+            cargo test --workspace
+
+    - name: kaniko-build
+      container:
+        image: gcr.io/kaniko-project/executor:latest
+        args:
+          - "--context=git://$(inputs.parameters.git-repo)#$(inputs.parameters.git-revision)"
+          - "--dockerfile=services/events-api/Dockerfile"
+          - "--destination=ghcr.io/ikedadev/events-api:{{inputs.parameters.image-tag}}"
+          - "--cache=true"
+
+    - name: kustomize-sync
+      container:
+        image: line/kubectl-kustomize:latest
+        command: [sh, -c]
+        args:
+          - |
+            cd deploy/k8s/base &&
+            kustomize edit set image ghcr.io/ikedadev/events-api=ghcr.io/ikedadev/events-api:{{inputs.parameters.image-tag}} &&
+            kubectl apply -k .

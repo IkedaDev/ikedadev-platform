@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: events-api-config
+  labels:
+    app.kubernetes.io/name: events-api
+data:
+  PORT: "8080"
+  HOST: "0.0.0.0"
+  RUST_LOG: "info,events_api=debug,tower_http=info"
+  DATABASE_MAX_CONNECTIONS: "20"
+  DATABASE_MIN_CONNECTIONS: "3"
