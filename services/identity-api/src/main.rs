@@ -42,7 +42,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tenant_repo = Arc::new(infrastructure::SqlxTenantRepository::new(pool.clone()));
     let user_repo = Arc::new(infrastructure::SqlxTenantUserRepository::new(pool.clone()));
     let api_key_repo = Arc::new(infrastructure::SqlxApiKeyRepository::new(pool.clone()));
-    let api_key_validator = Arc::new(infrastructure::SqlxApiKeyValidator::new(pool));
+    let api_key_validator = Arc::new(ikeda_core::tenant::CachedApiKeyValidator::new(
+        infrastructure::SqlxApiKeyValidator::new(pool),
+    ));
 
     let idp: Arc<dyn IdentityProviderPort> = match (
         std::env::var("KEYCLOAK_BASE_URL"),

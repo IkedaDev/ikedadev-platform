@@ -7,7 +7,8 @@ pub use crate::criteria::{
 pub use crate::error::{AppError, ValidationErrorDetail};
 pub use crate::response::{ApiResponse, PaginatedApiResponse, PaginationMeta};
 pub use crate::tenant::{
-    hash_api_key, ApiKeyValidator, AuthSource, AuthenticatedKey, AuthenticatedUser, JwksConfig,
-    JwksJwtValidator, JwtValidator, TenantContext, HEADER_API_KEY, HEADER_SCOPES, HEADER_TENANT_ID,
+    hash_api_key, ApiKeyValidator, AuthSource, AuthenticatedKey, AuthenticatedUser,
+    CachedApiKeyValidator, JwksConfig, JwksJwtValidator, JwtValidator, TenantContext,
+    DEFAULT_API_KEY_CACHE_TTL_SECS, HEADER_API_KEY, HEADER_SCOPES, HEADER_TENANT_ID,
     HEADER_USER_ID,
 };

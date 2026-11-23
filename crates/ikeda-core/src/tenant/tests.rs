@@ -494,3 +494,98 @@ async fn test_extractor_with_dev_auth_feature_allows_dev_headers() {
     assert_eq!(ctx.auth_source, AuthSource::DevHeaders);
     assert_eq!(ctx.scopes, vec!["events:read", "calendars:write"]);
 }
+
+struct CountingApiKeyValidator {
+    inner: MockApiKeyValidator,
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[async_trait]
+impl ApiKeyValidator for CountingApiKeyValidator {
+    async fn validate_key_hash(
+        &self,
+        key_hash: &str,
+    ) -> Result<Option<AuthenticatedKey>, AppError> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.validate_key_hash(key_hash).await
+    }
+}
+
+#[tokio::test]
+async fn test_cached_api_key_validator_hits_cache_and_expires_after_ttl() {
+    use super::validator::CachedApiKeyValidator;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    let mut mock = MockApiKeyValidator::new();
+    let tenant_id = Uuid::new_v4();
+    let raw_key = "ik_live_cached_key_001";
+    let key_hash = hash_api_key(raw_key);
+    mock.add_key(raw_key, tenant_id, vec!["crm:read".into()]);
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counting = CountingApiKeyValidator {
+        inner: mock,
+        calls: calls.clone(),
+    };
+    let cached = CachedApiKeyValidator::with_ttl(counting, Duration::from_millis(50));
+
+    // 1. First call -> cache miss, delegates to inner validator
+    let first = cached
+        .validate_key_hash(&key_hash)
+        .await
+        .expect("first lookup failed")
+        .expect("expected valid key");
+    assert_eq!(first.tenant_id, tenant_id);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    // 2. Second call within TTL -> cache hit, inner NOT called again
+    let second = cached
+        .validate_key_hash(&key_hash)
+        .await
+        .expect("second lookup failed")
+        .expect("expected cached key");
+    assert_eq!(second.tenant_id, tenant_id);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    // 3. Sleep past TTL -> cache expired, delegates to inner validator again
+    tokio::time::sleep(Duration::from_millis(70)).await;
+    let third = cached
+        .validate_key_hash(&key_hash)
+        .await
+        .expect("third lookup failed")
+        .expect("expected refreshed key");
+    assert_eq!(third.tenant_id, tenant_id);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn test_cached_api_key_validator_rejects_invalid_keys_without_caching() {
+    use super::validator::CachedApiKeyValidator;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counting = CountingApiKeyValidator {
+        inner: MockApiKeyValidator::new(),
+        calls: calls.clone(),
+    };
+    let cached = CachedApiKeyValidator::with_ttl(counting, Duration::from_secs(60));
+
+    let bogus_hash = hash_api_key("ik_live_invalid_key");
+
+    let res1 = cached
+        .validate_key_hash(&bogus_hash)
+        .await
+        .expect("validation error");
+    assert!(res1.is_none());
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    // Invalid keys are not cached as valid; second lookup delegates again and returns None
+    let res2 = cached
+        .validate_key_hash(&bogus_hash)
+        .await
+        .expect("validation error");
+    assert!(res2.is_none());
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}

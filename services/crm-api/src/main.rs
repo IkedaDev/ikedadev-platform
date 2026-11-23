@@ -39,7 +39,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("PostgreSQL connection pool established for crm_db with RLS support.");
 
     let client_repo = Arc::new(infrastructure::SqlxClientRepository::new(pool.clone()));
-    let api_key_validator = Arc::new(infrastructure::SqlxApiKeyValidator::new(pool));
+
+    // Dedicated lightweight pool for centralized API Key validation against identity_db
+    let identity_pool = match std::env::var("IDENTITY_DATABASE_URL") {
+        Ok(url) if !url.trim().is_empty() => {
+            let identity_db_config = infrastructure::DatabaseConfig {
+                url,
+                max_connections: 3,
+                min_connections: 1,
+                ..Default::default()
+            };
+            let id_pool = infrastructure::create_pool(&identity_db_config).await?;
+            tracing::info!(
+                "Dedicated identity_db connection pool established for API key validation."
+            );
+            id_pool
+        }
+        _ => {
+            tracing::warn!(
+                "IDENTITY_DATABASE_URL not set; falling back to primary DATABASE_URL for API key validation."
+            );
+            pool
+        }
+    };
+
+    let api_key_validator = Arc::new(ikeda_core::tenant::CachedApiKeyValidator::new(
+        infrastructure::SqlxApiKeyValidator::new(identity_pool),
+    ));
     let mut state = presentation::AppState::new(client_repo, api_key_validator);
 
     if let (Ok(jwks_uri), Ok(jwt_issuer)) = (std::env::var("JWKS_URI"), std::env::var("JWT_ISSUER"))

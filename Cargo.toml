@@ -5,6 +5,7 @@ members = [
     "services/events-api",
     "services/crm-api",
     "services/identity-api",
+    "services/catalog-api",
 ]
 
 [workspace.package]

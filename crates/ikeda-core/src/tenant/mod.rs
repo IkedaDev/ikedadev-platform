@@ -12,4 +12,7 @@ pub use jwt::{
     AuthenticatedUser, JwksConfig, JwksJwtValidator, JwtValidator, DEFAULT_JWKS_CACHE_TTL_SECS,
     DEFAULT_TENANT_CLAIM_NAME,
 };
-pub use validator::{hash_api_key, ApiKeyValidator, AuthenticatedKey};
+pub use validator::{
+    hash_api_key, ApiKeyValidator, AuthenticatedKey, CachedApiKeyValidator,
+    DEFAULT_API_KEY_CACHE_TTL_SECS,
+};

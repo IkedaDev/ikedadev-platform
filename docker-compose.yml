@@ -41,6 +41,8 @@ services:
       PORT: "8080"
       HOST: "0.0.0.0"
       DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/events_db?sslmode=disable"
+      # Optional: point to identity_db for centralized API key validation (falls back to DATABASE_URL)
+      # IDENTITY_DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/identity_db?sslmode=disable"
       DATABASE_MAX_CONNECTIONS: "20"
       DATABASE_MIN_CONNECTIONS: "3"
       RUST_LOG: "info,events_api=debug,tower_http=info"
@@ -65,6 +67,7 @@ services:
       PORT: "8081"
       HOST: "0.0.0.0"
       DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/crm_db?sslmode=disable"
+      IDENTITY_DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/identity_db?sslmode=disable"
       RUST_LOG: "info,crm_api=debug,tower_http=info"
     ports:
       - "8081:8081"
@@ -95,7 +98,29 @@ services:
       - "8082:8082"
 
   # ============================================================================
-  # 5. Keycloak Dev Server (Optional Profile: keycloak / full - Port 8180)
+  # 5. Catalog API (Optional Profile: full - Port 8083)
+  # ============================================================================
+  catalog-api:
+    container_name: ikedadev-catalog-api
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: services/catalog-api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: "8083"
+      HOST: "0.0.0.0"
+      DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/catalog_db?sslmode=disable"
+      IDENTITY_DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/identity_db?sslmode=disable"
+      RUST_LOG: "info,catalog_api=debug,tower_http=info"
+    ports:
+      - "8083:8083"
+
+  # ============================================================================
+  # 6. Keycloak Dev Server (Optional Profile: keycloak / full - Port 8180)
   #    Start with: docker compose --profile keycloak up -d
   # ============================================================================
   keycloak:

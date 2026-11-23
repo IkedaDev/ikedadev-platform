@@ -1,0 +1,32 @@
+name: Workspace CI
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+
+jobs:
+  quality-gate:
+    name: Format, Clippy & Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Cargo Dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Strict Formatting Check
+        run: cargo fmt --all -- --check
+
+      - name: Strict Clippy Check (-D warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Workspace Unit Tests
+        run: cargo test --workspace --lib
