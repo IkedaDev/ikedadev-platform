@@ -118,11 +118,10 @@ impl NotificationScheduler for MockNotificationScheduler {
         payload: WebhookEventPayload,
     ) -> Result<String, AppError> {
         let msg_id = format!("mock_msg_{}", Uuid::new_v4());
-        self.scheduled_reminders.lock().unwrap().push((
-            destination_url.to_string(),
-            scheduled_for,
-            payload,
-        ));
+        let mut lock = self.scheduled_reminders.lock().map_err(|e| {
+            AppError::InternalServerError(format!("Failed to acquire mock scheduler lock: {e}"))
+        })?;
+        lock.push((destination_url.to_string(), scheduled_for, payload));
         Ok(msg_id)
     }
 }

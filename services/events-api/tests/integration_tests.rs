@@ -3,15 +3,19 @@ use axum::{
     http::{header, Request, StatusCode},
 };
 use chrono::{Duration, TimeZone, Utc};
-use events_api::application::use_cases::{CreateCalendarCommand, CreateEventCommand};
+use events_api::application::use_cases::{
+    CreateCalendarCommand, CreateEventCommand, CreateEventExceptionCommand, UpdateCalendarCommand,
+    UpdateEventCommand,
+};
 use events_api::domain::models::*;
 use events_api::domain::repositories::{CalendarRepository, EventRepository};
 use events_api::domain::services::scheduler::{NotificationScheduler, WebhookEventPayload};
-use events_api::infrastructure::MockNotificationScheduler;
+use events_api::infrastructure::{MockNotificationScheduler, SqlxApiKeyValidator};
 use events_api::presentation::{create_router, AppState};
 use ikeda_core::criteria::Criteria;
 use ikeda_core::error::AppError;
-use ikeda_core::tenant::HEADER_TENANT_ID;
+use ikeda_core::tenant::{hash_api_key, ApiKeyValidator, AuthenticatedKey, HEADER_API_KEY};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -175,94 +179,249 @@ impl EventRepository for SharedMockEventRepo {
     }
 }
 
-fn setup_test_app() -> (axum::Router, AppState) {
+#[derive(Default)]
+struct TestInMemoryApiKeyValidator {
+    keys: Mutex<HashMap<String, AuthenticatedKey>>,
+}
+
+impl TestInMemoryApiKeyValidator {
+    fn register_key(&self, raw_key: &str, tenant_id: Uuid, scopes: Vec<String>) {
+        let hash = hash_api_key(raw_key);
+        self.keys
+            .lock()
+            .unwrap()
+            .insert(hash, AuthenticatedKey { tenant_id, scopes });
+    }
+}
+
+#[async_trait::async_trait]
+impl ApiKeyValidator for TestInMemoryApiKeyValidator {
+    async fn validate_key_hash(
+        &self,
+        key_hash: &str,
+    ) -> Result<Option<AuthenticatedKey>, AppError> {
+        Ok(self.keys.lock().unwrap().get(key_hash).cloned())
+    }
+}
+
+fn setup_test_app(
+    validator: Arc<dyn ApiKeyValidator>,
+) -> (
+    axum::Router,
+    AppState,
+    Arc<SharedMockCalendarRepo>,
+    Arc<SharedMockEventRepo>,
+) {
     let cal_repo = Arc::new(SharedMockCalendarRepo::default());
     let event_repo = Arc::new(SharedMockEventRepo::default());
-    let state = AppState::new(cal_repo, event_repo);
+    let state = AppState::new(cal_repo.clone(), event_repo.clone(), validator);
     let router = create_router(state.clone());
-    (router, state)
+    (router, state, cal_repo, event_repo)
 }
 
 #[tokio::test]
-async fn test_tenant_isolation_tenant_b_cannot_read_or_modify_tenant_a() {
-    let (app, state) = setup_test_app();
+async fn test_tenant_isolation_with_real_sqlx_api_keys_table() {
+    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgres://postgres:postgres@localhost:5432/events_db?sslmode=disable".to_string()
+    });
+
+    let pool = match sqlx::PgPool::connect(&db_url).await {
+        Ok(p) => p,
+        Err(_) => {
+            eprintln!("PostgreSQL not reachable at {db_url}. Skipping real DB test.");
+            return;
+        }
+    };
+
     let tenant_a = Uuid::new_v4();
     let tenant_b = Uuid::new_v4();
 
-    // 1. Tenant A creates Calendar A
-    let cal_a = Calendar::new(tenant_a, "Tenant A Private Calendar", "UTC", true, None);
-    let created_cal = state.calendar_repo.create(tenant_a, &cal_a).await.unwrap();
+    let raw_key_a = format!("ikeda_live_{}", Uuid::new_v4().simple());
+    let raw_key_b = format!("ikeda_live_{}", Uuid::new_v4().simple());
+    let hash_a = hash_api_key(&raw_key_a);
+    let hash_b = hash_api_key(&raw_key_b);
 
-    // 2. Tenant A creates Event A
-    let now = Utc::now();
-    let event_a = Event::new(
-        tenant_a,
-        created_cal.id,
-        "Confidential Board Meeting",
-        Some("Top secret".into()),
-        TimeRange::new(now, now + Duration::hours(1)).unwrap(),
-        "UTC",
-        None,
-        EventStatus::Confirmed,
-        None,
-        serde_json::json!({ "revenue": 1000000 }),
-    );
-    let created_event = state.event_repo.create(tenant_a, &event_a).await.unwrap();
+    // 1. Insert real API Keys into PostgreSQL api_keys table
+    sqlx::query(
+        r#"
+        INSERT INTO api_keys (tenant_id, name, key_prefix, key_hash, scopes, is_active)
+        VALUES ($1, 'Tenant A Production Key', 'ikeda_live', $2, '{"*"}', true)
+        "#,
+    )
+    .bind(tenant_a)
+    .bind(&hash_a)
+    .execute(&pool)
+    .await
+    .expect("Failed to insert Tenant A API key");
 
-    // 3. Tenant B attempts to read Tenant A's calendar list
-    let req = Request::builder()
-        .method("GET")
+    sqlx::query(
+        r#"
+        INSERT INTO api_keys (tenant_id, name, key_prefix, key_hash, scopes, is_active)
+        VALUES ($1, 'Tenant B Production Key', 'ikeda_live', $2, '{"*"}', true)
+        "#,
+    )
+    .bind(tenant_b)
+    .bind(&hash_b)
+    .execute(&pool)
+    .await
+    .expect("Failed to insert Tenant B API key");
+
+    // 2. Initialize application with real SqlxApiKeyValidator
+    let sqlx_validator = Arc::new(SqlxApiKeyValidator::new(pool.clone()));
+    let (app, _state, cal_repo, event_repo) = setup_test_app(sqlx_validator);
+
+    // 3. Tenant A creates Calendar A via HTTP with X-Api-Key
+    let cal_cmd = CreateCalendarCommand {
+        name: "Tenant A Sensitive Calendar".to_string(),
+        timezone: Some("UTC".to_string()),
+        allow_overlaps: Some(false),
+        working_hours: None,
+    };
+
+    let req_cal_a = Request::builder()
+        .method("POST")
         .uri("/v1/calendars")
-        .header(HEADER_TENANT_ID, tenant_b.to_string())
-        .body(Body::empty())
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(HEADER_API_KEY, &raw_key_a)
+        .body(Body::from(serde_json::to_string(&cal_cmd).unwrap()))
         .unwrap();
 
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+    let res_cal_a = app.clone().oneshot(req_cal_a).await.unwrap();
+    assert_eq!(res_cal_a.status(), StatusCode::CREATED);
+    let cal_bytes = axum::body::to_bytes(res_cal_a.into_body(), usize::MAX)
         .await
         .unwrap();
-    let body_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
-    assert_eq!(body_json["data"].as_array().unwrap().len(), 0); // Tenant B sees nothing
+    let cal_json: serde_json::Value = serde_json::from_slice(&cal_bytes).unwrap();
+    let cal_id = Uuid::parse_str(cal_json["data"]["id"].as_str().unwrap()).unwrap();
 
-    // 4. Tenant B attempts to access Calendar A directly by ID -> 404 Not Found
-    let req = Request::builder()
+    // 4. Tenant A creates Event A via HTTP with X-Api-Key
+    let now = Utc::now();
+    let event_cmd = CreateEventCommand {
+        calendar_id: cal_id,
+        title: "Top Secret Strategy Review".to_string(),
+        description: Some("Confidential".to_string()),
+        starts_at: now + Duration::hours(1),
+        ends_at: now + Duration::hours(2),
+        timezone: None,
+        rrule: None,
+        status: None,
+        external_resource_id: None,
+        metadata: Some(serde_json::json!({ "budget": 500000 })),
+    };
+
+    let req_event_a = Request::builder()
+        .method("POST")
+        .uri("/v1/events")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(HEADER_API_KEY, &raw_key_a)
+        .body(Body::from(serde_json::to_string(&event_cmd).unwrap()))
+        .unwrap();
+
+    let res_event_a = app.clone().oneshot(req_event_a).await.unwrap();
+    assert_eq!(res_event_a.status(), StatusCode::CREATED);
+    let event_bytes = axum::body::to_bytes(res_event_a.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let event_json: serde_json::Value = serde_json::from_slice(&event_bytes).unwrap();
+    let event_id = Uuid::parse_str(event_json["data"]["id"].as_str().unwrap()).unwrap();
+
+    // 5. Tenant B attempts to list calendars with raw_key_b -> returns 0 items
+    let req_b_list = Request::builder()
         .method("GET")
-        .uri(format!("/v1/calendars/{}", created_cal.id))
-        .header(HEADER_TENANT_ID, tenant_b.to_string())
+        .uri("/v1/calendars")
+        .header(HEADER_API_KEY, &raw_key_b)
         .body(Body::empty())
         .unwrap();
 
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let res_b_list = app.clone().oneshot(req_b_list).await.unwrap();
+    assert_eq!(res_b_list.status(), StatusCode::OK);
+    let list_bytes = axum::body::to_bytes(res_b_list.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let list_json: serde_json::Value = serde_json::from_slice(&list_bytes).unwrap();
+    assert_eq!(list_json["data"].as_array().unwrap().len(), 0);
 
-    // 5. Tenant B attempts to access Event A directly by ID -> 404 Not Found
-    let req = Request::builder()
+    // 6. Tenant B attempts to GET Calendar A by ID with raw_key_b -> 404 NOT_FOUND
+    let req_b_get_cal = Request::builder()
         .method("GET")
-        .uri(format!("/v1/events/{}", created_event.id))
-        .header(HEADER_TENANT_ID, tenant_b.to_string())
+        .uri(format!("/v1/calendars/{cal_id}"))
+        .header(HEADER_API_KEY, &raw_key_b)
         .body(Body::empty())
         .unwrap();
 
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let res_b_get_cal = app.clone().oneshot(req_b_get_cal).await.unwrap();
+    assert_eq!(res_b_get_cal.status(), StatusCode::NOT_FOUND);
 
-    // 6. Tenant B attempts to delete Event A -> 404 Not Found
-    let req = Request::builder()
+    // 7. Tenant B attempts to GET Event A by ID with raw_key_b -> 404 NOT_FOUND
+    let req_b_get_event = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/events/{event_id}"))
+        .header(HEADER_API_KEY, &raw_key_b)
+        .body(Body::empty())
+        .unwrap();
+
+    let res_b_get_event = app.clone().oneshot(req_b_get_event).await.unwrap();
+    assert_eq!(res_b_get_event.status(), StatusCode::NOT_FOUND);
+
+    // 8. Tenant B attempts to PATCH Event A with raw_key_b -> 404 NOT_FOUND
+    let patch_cmd = UpdateEventCommand {
+        title: Some("Hacked Event Title".to_string()),
+        description: None,
+        starts_at: None,
+        ends_at: None,
+        status: None,
+        metadata: None,
+    };
+    let req_b_patch = Request::builder()
+        .method("PATCH")
+        .uri(format!("/v1/events/{event_id}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(HEADER_API_KEY, &raw_key_b)
+        .body(Body::from(serde_json::to_string(&patch_cmd).unwrap()))
+        .unwrap();
+
+    let res_b_patch = app.clone().oneshot(req_b_patch).await.unwrap();
+    assert_eq!(res_b_patch.status(), StatusCode::NOT_FOUND);
+
+    // 9. Tenant B attempts to DELETE Event A with raw_key_b -> 404 NOT_FOUND
+    let req_b_delete = Request::builder()
         .method("DELETE")
-        .uri(format!("/v1/events/{}", created_event.id))
-        .header(HEADER_TENANT_ID, tenant_b.to_string())
+        .uri(format!("/v1/events/{event_id}"))
+        .header(HEADER_API_KEY, &raw_key_b)
         .body(Body::empty())
         .unwrap();
 
-    let res = app.oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let res_b_delete = app.clone().oneshot(req_b_delete).await.unwrap();
+    assert_eq!(res_b_delete.status(), StatusCode::NOT_FOUND);
+
+    // 10. Attempt request with invalid API Key -> 401 UNAUTHORIZED
+    let req_invalid = Request::builder()
+        .method("GET")
+        .uri("/v1/calendars")
+        .header(HEADER_API_KEY, "invalid_bogus_key_xyz")
+        .body(Body::empty())
+        .unwrap();
+
+    let res_invalid = app.clone().oneshot(req_invalid).await.unwrap();
+    assert_eq!(res_invalid.status(), StatusCode::UNAUTHORIZED);
+
+    // Verify Tenant A's event was never touched or deleted
+    let event_check = event_repo.find_by_id(tenant_a, event_id).await.unwrap();
+    assert!(event_check.is_some());
+    assert_eq!(event_check.unwrap().title, "Top Secret Strategy Review");
+
+    let cal_check = cal_repo.find_by_id(tenant_a, cal_id).await.unwrap();
+    assert!(cal_check.is_some());
 }
 
 #[tokio::test]
 async fn test_overlapping_events_on_strict_calendar_returns_409_conflict() {
-    let (app, _) = setup_test_app();
+    let mock_validator = Arc::new(TestInMemoryApiKeyValidator::default());
     let tenant_id = Uuid::new_v4();
+    let api_key = "ikeda_test_key_strict_cal";
+    mock_validator.register_key(api_key, tenant_id, vec!["*".into()]);
+
+    let (app, _, _, _) = setup_test_app(mock_validator);
 
     // 1. Create strict calendar (allow_overlaps = false)
     let cal_cmd = CreateCalendarCommand {
@@ -276,7 +435,7 @@ async fn test_overlapping_events_on_strict_calendar_returns_409_conflict() {
         .method("POST")
         .uri("/v1/calendars")
         .header(header::CONTENT_TYPE, "application/json")
-        .header(HEADER_TENANT_ID, tenant_id.to_string())
+        .header(HEADER_API_KEY, api_key)
         .body(Body::from(serde_json::to_string(&cal_cmd).unwrap()))
         .unwrap();
 
@@ -310,7 +469,7 @@ async fn test_overlapping_events_on_strict_calendar_returns_409_conflict() {
         .method("POST")
         .uri("/v1/events")
         .header(header::CONTENT_TYPE, "application/json")
-        .header(HEADER_TENANT_ID, tenant_id.to_string())
+        .header(HEADER_API_KEY, api_key)
         .body(Body::from(serde_json::to_string(&event1_cmd).unwrap()))
         .unwrap();
 
@@ -335,7 +494,7 @@ async fn test_overlapping_events_on_strict_calendar_returns_409_conflict() {
         .method("POST")
         .uri("/v1/events")
         .header(header::CONTENT_TYPE, "application/json")
-        .header(HEADER_TENANT_ID, tenant_id.to_string())
+        .header(HEADER_API_KEY, api_key)
         .body(Body::from(serde_json::to_string(&event2_cmd).unwrap()))
         .unwrap();
 
@@ -351,8 +510,12 @@ async fn test_overlapping_events_on_strict_calendar_returns_409_conflict() {
 
 #[tokio::test]
 async fn test_recurring_event_with_cancellation_exception_returns_exact_occurrences() {
-    let (app, state) = setup_test_app();
+    let mock_validator = Arc::new(TestInMemoryApiKeyValidator::default());
     let tenant_id = Uuid::new_v4();
+    let api_key = "ikeda_test_key_recurring";
+    mock_validator.register_key(api_key, tenant_id, vec!["*".into()]);
+
+    let (app, state, _, _) = setup_test_app(mock_validator);
 
     let cal = Calendar::new(tenant_id, "Gym Class", "UTC", true, None);
     let created_cal = state.calendar_repo.create(tenant_id, &cal).await.unwrap();
@@ -404,7 +567,7 @@ async fn test_recurring_event_with_cancellation_exception_returns_exact_occurren
     let req = Request::builder()
         .method("GET")
         .uri(&uri)
-        .header(HEADER_TENANT_ID, tenant_id.to_string())
+        .header(HEADER_API_KEY, api_key)
         .body(Body::empty())
         .unwrap();
 
@@ -419,6 +582,130 @@ async fn test_recurring_event_with_cancellation_exception_returns_exact_occurren
 
     // Exactly 4 occurrences returned (Day 1, Day 2, Day 4, Day 5) - Day 3 was cancelled!
     assert_eq!(instances.len(), 4);
+}
+
+#[tokio::test]
+async fn test_calendar_and_event_crud_via_http() {
+    let mock_validator = Arc::new(TestInMemoryApiKeyValidator::default());
+    let tenant_id = Uuid::new_v4();
+    let api_key = "ikeda_crud_key";
+    mock_validator.register_key(api_key, tenant_id, vec!["*".into()]);
+
+    let (app, _, _, _) = setup_test_app(mock_validator);
+
+    // 1. Create Calendar
+    let create_cal = CreateCalendarCommand {
+        name: "Conference Hall".to_string(),
+        timezone: Some("UTC".to_string()),
+        allow_overlaps: Some(true),
+        working_hours: None,
+    };
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/calendars")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(HEADER_API_KEY, api_key)
+                .body(Body::from(serde_json::to_string(&create_cal).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let cal_id = Uuid::parse_str(json["data"]["id"].as_str().unwrap()).unwrap();
+
+    // 2. Patch Calendar
+    let patch_cal = UpdateCalendarCommand {
+        name: Some("Grand Hall".to_string()),
+        timezone: None,
+        allow_overlaps: None,
+        working_hours: None,
+    };
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/v1/calendars/{cal_id}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(HEADER_API_KEY, api_key)
+                .body(Body::from(serde_json::to_string(&patch_cal).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // 3. Delete Calendar
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/v1/calendars/{cal_id}"))
+                .header(HEADER_API_KEY, api_key)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_create_event_exception_endpoint() {
+    let mock_validator = Arc::new(TestInMemoryApiKeyValidator::default());
+    let tenant_id = Uuid::new_v4();
+    let api_key = "ikeda_exception_key";
+    mock_validator.register_key(api_key, tenant_id, vec!["*".into()]);
+
+    let (app, state, _, _) = setup_test_app(mock_validator);
+
+    let cal = Calendar::new(tenant_id, "Yoga Studio", "UTC", true, None);
+    let created_cal = state.calendar_repo.create(tenant_id, &cal).await.unwrap();
+
+    let now = Utc::now();
+    let recurring = Event::new(
+        tenant_id,
+        created_cal.id,
+        "Daily Practice",
+        None,
+        TimeRange::new(now, now + Duration::hours(1)).unwrap(),
+        "UTC",
+        Some("FREQ=DAILY;COUNT=7".to_string()),
+        EventStatus::Confirmed,
+        None,
+        serde_json::json!({}),
+    );
+    let created_event = state
+        .event_repo
+        .create(tenant_id, &recurring)
+        .await
+        .unwrap();
+
+    let cmd = CreateEventExceptionCommand {
+        original_starts_at: now + Duration::days(2),
+        is_cancelled: true,
+        rescheduled_starts_at: None,
+        rescheduled_ends_at: None,
+    };
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/v1/events/{}/exceptions", created_event.id))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(HEADER_API_KEY, api_key)
+        .body(Body::from(serde_json::to_string(&cmd).unwrap()))
+        .unwrap();
+
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
 }
 
 #[tokio::test]

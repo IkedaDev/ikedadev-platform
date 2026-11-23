@@ -51,7 +51,7 @@ impl CalendarRepository for MockCalendarRepository {
         let mut lock = self.calendars.lock().unwrap();
         if let Some(c) = lock
             .iter_mut()
-            .find(|c| c.tenant_id == tenant_id && c.id == id)
+            .find(|c| c.tenant_id == tenant_id && c.id == id && !c.is_deleted())
         {
             c.mark_deleted();
             Ok(true)
@@ -151,7 +151,7 @@ impl EventRepository for MockEventRepository {
         let mut lock = self.events.lock().unwrap();
         if let Some(e) = lock
             .iter_mut()
-            .find(|e| e.tenant_id == tenant_id && e.id == id)
+            .find(|e| e.tenant_id == tenant_id && e.id == id && !e.is_deleted())
         {
             e.mark_deleted();
             Ok(true)
@@ -311,4 +311,239 @@ async fn test_check_availability_use_case() {
 
     assert_eq!(result.busy_slots.len(), 1);
     assert_eq!(result.available_slots.len(), 2); // 0..1 and 2..3
+}
+
+#[tokio::test]
+async fn test_update_calendar_use_case() {
+    let cal_repo = Arc::new(MockCalendarRepository::default());
+    let tenant_id = Uuid::new_v4();
+
+    let cal = Calendar::new(tenant_id, "Old Name", "UTC", true, None);
+    cal_repo.create(tenant_id, &cal).await.unwrap();
+
+    let use_case = UpdateCalendarUseCase::new(cal_repo.clone());
+    let cmd = UpdateCalendarCommand {
+        name: Some("New Name".to_string()),
+        timezone: Some("America/Santiago".to_string()),
+        allow_overlaps: Some(false),
+        working_hours: Some(serde_json::json!({"monday": {"start": "09:00", "end": "17:00"}})),
+    };
+
+    let updated = use_case.execute(tenant_id, cal.id, cmd).await.unwrap();
+    assert_eq!(updated.name, "New Name");
+    assert_eq!(updated.timezone, "America/Santiago");
+    assert!(!updated.allow_overlaps);
+
+    // Invalid timezone returns BadRequest
+    let bad_cmd = UpdateCalendarCommand {
+        name: None,
+        timezone: Some("Invalid/Timezone".to_string()),
+        allow_overlaps: None,
+        working_hours: None,
+    };
+    let bad_res = use_case.execute(tenant_id, cal.id, bad_cmd).await;
+    assert!(bad_res.is_err());
+}
+
+#[tokio::test]
+async fn test_delete_calendar_use_case() {
+    let cal_repo = Arc::new(MockCalendarRepository::default());
+    let tenant_id = Uuid::new_v4();
+
+    let cal = Calendar::new(tenant_id, "To Delete", "UTC", true, None);
+    cal_repo.create(tenant_id, &cal).await.unwrap();
+
+    let use_case = DeleteCalendarUseCase::new(cal_repo.clone());
+    let res = use_case.execute(tenant_id, cal.id).await;
+    assert!(res.is_ok());
+
+    let found = cal_repo.find_by_id(tenant_id, cal.id).await.unwrap();
+    assert!(found.is_none());
+
+    // Deleting again returns NotFound
+    let res2 = use_case.execute(tenant_id, cal.id).await;
+    assert!(res2.is_err());
+}
+
+#[tokio::test]
+async fn test_update_event_use_case_and_self_exclusion() {
+    let cal_repo = Arc::new(MockCalendarRepository::default());
+    let event_repo = Arc::new(MockEventRepository::default());
+    let tenant_id = Uuid::new_v4();
+
+    let strict_cal = Calendar::new(tenant_id, "Strict Room", "UTC", false, None);
+    cal_repo.create(tenant_id, &strict_cal).await.unwrap();
+
+    let now = Utc::now();
+    let event1 = Event::new(
+        tenant_id,
+        strict_cal.id,
+        "Event 1",
+        None,
+        TimeRange::new(now + Duration::hours(1), now + Duration::hours(2)).unwrap(),
+        "UTC",
+        None,
+        EventStatus::Confirmed,
+        None,
+        serde_json::json!({}),
+    );
+    event_repo.create(tenant_id, &event1).await.unwrap();
+
+    let event2 = Event::new(
+        tenant_id,
+        strict_cal.id,
+        "Event 2",
+        None,
+        TimeRange::new(now + Duration::hours(2), now + Duration::hours(3)).unwrap(),
+        "UTC",
+        None,
+        EventStatus::Confirmed,
+        None,
+        serde_json::json!({}),
+    );
+    event_repo.create(tenant_id, &event2).await.unwrap();
+
+    let use_case = UpdateEventUseCase::new(cal_repo.clone(), event_repo.clone());
+
+    // Updating event 1 title & staying in same time range MUST succeed (not conflict with itself)
+    let cmd_ok = UpdateEventCommand {
+        title: Some("Event 1 Renamed".to_string()),
+        description: Some("New description".to_string()),
+        starts_at: Some(now + Duration::hours(1)),
+        ends_at: Some(now + Duration::hours(2)),
+        status: None,
+        metadata: None,
+    };
+    let updated = use_case
+        .execute(tenant_id, event1.id, cmd_ok)
+        .await
+        .unwrap();
+    assert_eq!(updated.title, "Event 1 Renamed");
+
+    // Updating event 1 to collide with event 2 (1:30 - 2:30) MUST fail with 409 Conflict
+    let cmd_conflict = UpdateEventCommand {
+        title: None,
+        description: None,
+        starts_at: Some(now + Duration::hours(1) + Duration::minutes(30)),
+        ends_at: Some(now + Duration::hours(2) + Duration::minutes(30)),
+        status: None,
+        metadata: None,
+    };
+    let conflict_res = use_case.execute(tenant_id, event1.id, cmd_conflict).await;
+    match conflict_res.unwrap_err() {
+        AppError::Conflict(msg) => assert!(msg.contains("overlaps")),
+        other => panic!("Expected Conflict, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_delete_event_use_case() {
+    let event_repo = Arc::new(MockEventRepository::default());
+    let tenant_id = Uuid::new_v4();
+
+    let now = Utc::now();
+    let event = Event::new(
+        tenant_id,
+        Uuid::new_v4(),
+        "To Delete",
+        None,
+        TimeRange::new(now, now + Duration::hours(1)).unwrap(),
+        "UTC",
+        None,
+        EventStatus::Confirmed,
+        None,
+        serde_json::json!({}),
+    );
+    event_repo.create(tenant_id, &event).await.unwrap();
+
+    let use_case = DeleteEventUseCase::new(event_repo.clone());
+    let res = use_case.execute(tenant_id, event.id).await;
+    assert!(res.is_ok());
+
+    let found = event_repo.find_by_id(tenant_id, event.id).await.unwrap();
+    assert!(found.is_none());
+
+    let res2 = use_case.execute(tenant_id, event.id).await;
+    assert!(res2.is_err());
+}
+
+#[tokio::test]
+async fn test_create_event_exception_use_case() {
+    let event_repo = Arc::new(MockEventRepository::default());
+    let tenant_id = Uuid::new_v4();
+
+    let now = Utc::now();
+    // Recurring event with RRULE
+    let recurring_event = Event::new(
+        tenant_id,
+        Uuid::new_v4(),
+        "Daily Standup",
+        None,
+        TimeRange::new(now, now + Duration::minutes(30)).unwrap(),
+        "UTC",
+        Some("FREQ=DAILY;COUNT=5".to_string()),
+        EventStatus::Confirmed,
+        None,
+        serde_json::json!({}),
+    );
+    event_repo
+        .create(tenant_id, &recurring_event)
+        .await
+        .unwrap();
+
+    let use_case = CreateEventExceptionUseCase::new(event_repo.clone());
+
+    // 1. Cancel an occurrence
+    let cancel_cmd = CreateEventExceptionCommand {
+        original_starts_at: now + Duration::days(1),
+        is_cancelled: true,
+        rescheduled_starts_at: None,
+        rescheduled_ends_at: None,
+    };
+    let cancel_ex = use_case
+        .execute(tenant_id, recurring_event.id, cancel_cmd)
+        .await
+        .unwrap();
+    assert!(cancel_ex.is_cancelled);
+    assert_eq!(cancel_ex.event_id, recurring_event.id);
+
+    // 2. Reschedule an occurrence
+    let reschedule_cmd = CreateEventExceptionCommand {
+        original_starts_at: now + Duration::days(2),
+        is_cancelled: false,
+        rescheduled_starts_at: Some(now + Duration::days(2) + Duration::hours(1)),
+        rescheduled_ends_at: Some(now + Duration::days(2) + Duration::hours(2)),
+    };
+    let reschedule_ex = use_case
+        .execute(tenant_id, recurring_event.id, reschedule_cmd)
+        .await
+        .unwrap();
+    assert!(!reschedule_ex.is_cancelled);
+    assert!(reschedule_ex.rescheduled_time_range.is_some());
+
+    // 3. Exception on non-recurring event fails with BadRequest
+    let non_recurring = Event::new(
+        tenant_id,
+        Uuid::new_v4(),
+        "One-off Event",
+        None,
+        TimeRange::new(now, now + Duration::hours(1)).unwrap(),
+        "UTC",
+        None,
+        EventStatus::Confirmed,
+        None,
+        serde_json::json!({}),
+    );
+    event_repo.create(tenant_id, &non_recurring).await.unwrap();
+
+    let fail_cmd = CreateEventExceptionCommand {
+        original_starts_at: now,
+        is_cancelled: true,
+        rescheduled_starts_at: None,
+        rescheduled_ends_at: None,
+    };
+    let fail_res = use_case
+        .execute(tenant_id, non_recurring.id, fail_cmd)
+        .await;
+    assert!(fail_res.is_err());
 }

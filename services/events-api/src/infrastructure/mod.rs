@@ -1,7 +1,10 @@
+pub mod auth;
 pub mod database;
 pub mod qstash;
 pub mod repositories;
 
+#[allow(unused_imports)]
+pub use auth::SqlxApiKeyValidator;
 #[allow(unused_imports)]
 pub use database::{begin_tenant_tx, create_pool, DatabaseConfig};
 #[allow(unused_imports)]

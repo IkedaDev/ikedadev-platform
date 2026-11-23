@@ -1,5 +1,8 @@
 use super::state::AppState;
-use crate::application::use_cases::{CreateCalendarCommand, CreateCalendarUseCase};
+use crate::application::use_cases::{
+    CreateCalendarCommand, CreateCalendarUseCase, DeleteCalendarUseCase, UpdateCalendarCommand,
+    UpdateCalendarUseCase,
+};
 use crate::domain::models::Calendar;
 use axum::{
     extract::{Path, State},
@@ -81,4 +84,57 @@ pub async fn get_calendar(
         .ok_or_else(|| AppError::NotFound(format!("Calendar with ID '{id}' not found")))?;
 
     Ok(Json(ApiResponse::ok(calendar)))
+}
+
+/// Updates details of an existing calendar.
+#[utoipa::path(
+    patch,
+    path = "/v1/calendars/{id}",
+    tag = "Calendars",
+    params(
+        ("id" = Uuid, Path, description = "Calendar unique identifier")
+    ),
+    request_body = UpdateCalendarCommand,
+    responses(
+        (status = 200, description = "Calendar updated successfully", body = ApiResponse<Calendar>),
+        (status = 404, description = "Calendar not found", body = ApiResponse<serde_json::Value>),
+        (status = 400, description = "Invalid update payload", body = ApiResponse<serde_json::Value>),
+        (status = 401, description = "Unauthorized tenant context", body = ApiResponse<serde_json::Value>)
+    )
+)]
+pub async fn patch_calendar(
+    State(state): State<AppState>,
+    tenant: TenantContext,
+    Path(id): Path<Uuid>,
+    Json(cmd): Json<UpdateCalendarCommand>,
+) -> Result<impl IntoResponse, AppError> {
+    let use_case = UpdateCalendarUseCase::new(state.calendar_repo.clone());
+    let calendar = use_case.execute(tenant.tenant_id, id, cmd).await?;
+
+    Ok(Json(ApiResponse::ok(calendar)))
+}
+
+/// Soft-deletes a calendar by ID.
+#[utoipa::path(
+    delete,
+    path = "/v1/calendars/{id}",
+    tag = "Calendars",
+    params(
+        ("id" = Uuid, Path, description = "Calendar unique identifier")
+    ),
+    responses(
+        (status = 200, description = "Calendar deleted successfully", body = ApiResponse<serde_json::Value>),
+        (status = 404, description = "Calendar not found", body = ApiResponse<serde_json::Value>),
+        (status = 401, description = "Unauthorized tenant context", body = ApiResponse<serde_json::Value>)
+    )
+)]
+pub async fn delete_calendar(
+    State(state): State<AppState>,
+    tenant: TenantContext,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, AppError> {
+    let use_case = DeleteCalendarUseCase::new(state.calendar_repo.clone());
+    use_case.execute(tenant.tenant_id, id).await?;
+
+    Ok(Json(ApiResponse::message("Calendar deleted successfully")))
 }

@@ -1,9 +1,13 @@
 use super::state::AppState;
 use crate::application::use_cases::{
-    CheckAvailabilityQuery, CheckAvailabilityUseCase, CreateEventCommand, CreateEventUseCase,
-    FindEventsByRangeQuery, FindEventsByRangeUseCase,
+    CheckAvailabilityQuery, CheckAvailabilityUseCase, CreateEventCommand,
+    CreateEventExceptionCommand, CreateEventExceptionUseCase, CreateEventUseCase,
+    DeleteEventUseCase, FindEventsByRangeQuery, FindEventsByRangeUseCase, UpdateEventCommand,
+    UpdateEventUseCase,
 };
-use crate::domain::models::{AvailabilityResult, Event, EventInstance, EventStatus, TimeRange};
+use crate::domain::models::{
+    AvailabilityResult, Event, EventException, EventInstance, EventStatus, TimeRange,
+};
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -57,22 +61,8 @@ pub struct AvailabilityQueryParams {
     pub slot_duration_minutes: Option<i64>,
 }
 
-/// Request payload for patching an existing event.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct PatchEventPayload {
-    /// Optional updated title.
-    pub title: Option<String>,
-    /// Optional updated description.
-    pub description: Option<String>,
-    /// Optional updated start timestamp.
-    pub starts_at: Option<DateTime<Utc>>,
-    /// Optional updated end timestamp.
-    pub ends_at: Option<DateTime<Utc>>,
-    /// Optional updated confirmation status.
-    pub status: Option<EventStatus>,
-    /// Optional updated metadata object.
-    pub metadata: Option<serde_json::Value>,
-}
+/// Request payload for patching an existing event (alias to UpdateEventCommand).
+pub type PatchEventPayload = UpdateEventCommand;
 
 /// Creates a new event with idempotency support and optional overlap prevention.
 #[utoipa::path(
@@ -98,8 +88,8 @@ pub async fn create_event(
 ) -> Result<impl IntoResponse, AppError> {
     // Idempotency: inspect Idempotency-Key header and bind to external_resource_id if unassigned
     if cmd.external_resource_id.is_none() {
-        if let Some(idemp_val) = headers.get(HEADER_IDEMPOTENCY_KEY) {
-            if let Ok(key_str) = idemp_val.to_str() {
+        if let Some(idempotency_val) = headers.get(HEADER_IDEMPOTENCY_KEY) {
+            if let Ok(key_str) = idempotency_val.to_str() {
                 let trimmed = key_str.trim();
                 if !trimmed.is_empty() {
                     cmd.external_resource_id = Some(trimmed.to_string());
@@ -147,7 +137,7 @@ pub async fn list_events_by_range(
     Ok(Json(ApiResponse::ok(instances)))
 }
 
-/// Searches and filters events using dynamic criteria expressions.
+/// Dynamic criteria search for events.
 #[utoipa::path(
     post,
     path = "/v1/events/search",
@@ -155,7 +145,7 @@ pub async fn list_events_by_range(
     request_body = EventSearchRequest,
     responses(
         (status = 200, description = "Filtered event occurrences", body = ApiResponse<Vec<EventInstance>>),
-        (status = 400, description = "Invalid search criteria", body = ApiResponse<serde_json::Value>),
+        (status = 400, description = "Invalid search payload", body = ApiResponse<serde_json::Value>),
         (status = 401, description = "Unauthorized tenant context", body = ApiResponse<serde_json::Value>)
     )
 )]
@@ -165,16 +155,29 @@ pub async fn search_events(
     Json(req): Json<EventSearchRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let range = TimeRange::new(req.starts_at, req.ends_at)?;
-    let query = FindEventsByRangeQuery {
-        calendar_id: req.calendar_id,
-        range,
-        criteria: req.criteria,
-    };
+    let criteria = req.criteria.unwrap_or_default();
 
-    let use_case = FindEventsByRangeUseCase::new(state.event_repo.clone());
-    let instances = use_case.execute(tenant.tenant_id, query).await?;
+    let raw_events = state
+        .event_repo
+        .find_by_criteria(tenant.tenant_id, req.calendar_id, &criteria)
+        .await?;
 
-    Ok(Json(ApiResponse::ok(instances)))
+    let mut all_instances = Vec::new();
+    for event in &raw_events {
+        let exceptions = if event.is_recurring() {
+            state
+                .event_repo
+                .find_exceptions(tenant.tenant_id, event.id)
+                .await?
+        } else {
+            Vec::new()
+        };
+
+        let instances = crate::domain::services::expand_recurrence(event, &range, &exceptions)?;
+        all_instances.extend(instances);
+    }
+
+    Ok(Json(ApiResponse::ok(all_instances)))
 }
 
 /// Retrieves a specific event by ID.
@@ -213,10 +216,11 @@ pub async fn get_event(
     params(
         ("id" = Uuid, Path, description = "Event unique identifier")
     ),
-    request_body = PatchEventPayload,
+    request_body = UpdateEventCommand,
     responses(
         (status = 200, description = "Event updated successfully", body = ApiResponse<Event>),
         (status = 404, description = "Event not found", body = ApiResponse<serde_json::Value>),
+        (status = 409, description = "Conflict: event overlaps on strict calendar", body = ApiResponse<serde_json::Value>),
         (status = 400, description = "Invalid update payload", body = ApiResponse<serde_json::Value>),
         (status = 401, description = "Unauthorized tenant context", body = ApiResponse<serde_json::Value>)
     )
@@ -225,41 +229,10 @@ pub async fn patch_event(
     State(state): State<AppState>,
     tenant: TenantContext,
     Path(id): Path<Uuid>,
-    Json(payload): Json<PatchEventPayload>,
+    Json(cmd): Json<UpdateEventCommand>,
 ) -> Result<impl IntoResponse, AppError> {
-    let mut event = state
-        .event_repo
-        .find_by_id(tenant.tenant_id, id)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("Event with ID '{id}' not found")))?;
-
-    if let Some(title) = payload.title {
-        let t = title.trim();
-        if t.is_empty() {
-            return Err(AppError::BadRequest(
-                "Event title cannot be empty".to_string(),
-            ));
-        }
-        event.title = t.to_string();
-    }
-
-    if let Some(desc) = payload.description {
-        event.description = Some(desc);
-    }
-
-    let starts_at = payload.starts_at.unwrap_or(event.time_range.starts_at);
-    let ends_at = payload.ends_at.unwrap_or(event.time_range.ends_at);
-    event.time_range = TimeRange::new(starts_at, ends_at)?;
-
-    if let Some(status) = payload.status {
-        event.status = status;
-    }
-
-    if let Some(meta) = payload.metadata {
-        event.metadata = meta;
-    }
-
-    let updated = state.event_repo.update(tenant.tenant_id, &event).await?;
+    let use_case = UpdateEventUseCase::new(state.calendar_repo.clone(), state.event_repo.clone());
+    let updated = use_case.execute(tenant.tenant_id, id, cmd).await?;
     Ok(Json(ApiResponse::ok(updated)))
 }
 
@@ -282,14 +255,39 @@ pub async fn delete_event(
     tenant: TenantContext,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, AppError> {
-    let deleted = state.event_repo.soft_delete(tenant.tenant_id, id).await?;
-    if !deleted {
-        return Err(AppError::NotFound(format!(
-            "Event with ID '{id}' not found"
-        )));
-    }
+    let use_case = DeleteEventUseCase::new(state.event_repo.clone());
+    use_case.execute(tenant.tenant_id, id).await?;
 
     Ok(Json(ApiResponse::message("Event deleted successfully")))
+}
+
+/// Creates an occurrence exception (cancellation or rescheduling) for a recurring event.
+#[utoipa::path(
+    post,
+    path = "/v1/events/{id}/exceptions",
+    tag = "Events",
+    params(
+        ("id" = Uuid, Path, description = "Parent recurring event identifier")
+    ),
+    request_body = CreateEventExceptionCommand,
+    responses(
+        (status = 201, description = "Event occurrence exception created", body = ApiResponse<EventException>),
+        (status = 404, description = "Event not found", body = ApiResponse<serde_json::Value>),
+        (status = 400, description = "Invalid exception payload", body = ApiResponse<serde_json::Value>),
+        (status = 401, description = "Unauthorized tenant context", body = ApiResponse<serde_json::Value>)
+    )
+)]
+pub async fn create_event_exception(
+    State(state): State<AppState>,
+    tenant: TenantContext,
+    Path(id): Path<Uuid>,
+    Json(cmd): Json<CreateEventExceptionCommand>,
+) -> Result<impl IntoResponse, AppError> {
+    let use_case = CreateEventExceptionUseCase::new(state.event_repo.clone());
+    let exception = use_case.execute(tenant.tenant_id, id, cmd).await?;
+
+    let response = ApiResponse::created(exception, "Event exception created successfully");
+    Ok((StatusCode::CREATED, Json(response)))
 }
 
 /// Computes available booking slots for a calendar.

@@ -45,8 +45,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("PostgreSQL connection pool established with RLS transaction support.");
 
     let calendar_repo = Arc::new(infrastructure::SqlxCalendarRepository::new(pool.clone()));
-    let event_repo = Arc::new(infrastructure::SqlxEventRepository::new(pool));
-    let state = presentation::AppState::new(calendar_repo, event_repo);
+    let event_repo = Arc::new(infrastructure::SqlxEventRepository::new(pool.clone()));
+    let api_key_validator = Arc::new(infrastructure::SqlxApiKeyValidator::new(pool));
+    let state = presentation::AppState::new(calendar_repo, event_repo, api_key_validator);
 
     // 5. Configure middleware layers (CORS, Request Tracing)
     let cors = CorsLayer::new()

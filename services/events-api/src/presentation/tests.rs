@@ -1,7 +1,10 @@
 use super::routes::{create_router, ApiDoc};
 use super::state::AppState;
 use crate::application::tests::MockCalendarRepository;
-use crate::application::use_cases::{CreateCalendarCommand, CreateEventCommand};
+use crate::application::use_cases::{
+    CreateCalendarCommand, CreateEventCommand, CreateEventExceptionCommand, UpdateCalendarCommand,
+    UpdateEventCommand,
+};
 use crate::domain::models::{Calendar, Event, EventException, TimeRange};
 use crate::domain::repositories::{CalendarRepository, EventRepository};
 use async_trait::async_trait;
@@ -12,7 +15,7 @@ use axum::{
 use chrono::{Duration, Utc};
 use ikeda_core::criteria::Criteria;
 use ikeda_core::error::AppError;
-use ikeda_core::tenant::HEADER_TENANT_ID;
+use ikeda_core::tenant::{ApiKeyValidator, AuthenticatedKey, HEADER_API_KEY};
 use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 use utoipa::OpenApi;
@@ -21,6 +24,7 @@ use uuid::Uuid;
 #[derive(Default)]
 struct PresentationMockEventRepo {
     events: Mutex<Vec<Event>>,
+    exceptions: Mutex<Vec<EventException>>,
 }
 
 #[async_trait]
@@ -83,10 +87,15 @@ impl EventRepository for PresentationMockEventRepo {
 
     async fn find_exceptions(
         &self,
-        _tenant_id: Uuid,
-        _event_id: Uuid,
+        tenant_id: Uuid,
+        event_id: Uuid,
     ) -> Result<Vec<EventException>, AppError> {
-        Ok(Vec::new())
+        let lock = self.exceptions.lock().unwrap();
+        Ok(lock
+            .iter()
+            .filter(|ex| ex.tenant_id == tenant_id && ex.event_id == event_id)
+            .cloned()
+            .collect())
     }
 
     async fn add_exception(
@@ -94,6 +103,7 @@ impl EventRepository for PresentationMockEventRepo {
         _tenant_id: Uuid,
         exception: &EventException,
     ) -> Result<EventException, AppError> {
+        self.exceptions.lock().unwrap().push(exception.clone());
         Ok(exception.clone())
     }
 
@@ -121,11 +131,33 @@ impl EventRepository for PresentationMockEventRepo {
     }
 }
 
-fn create_test_state() -> AppState {
+struct PresentationMockApiKeyValidator {
+    tenant_id: Uuid,
+}
+
+#[async_trait]
+impl ApiKeyValidator for PresentationMockApiKeyValidator {
+    async fn validate_key_hash(
+        &self,
+        _key_hash: &str,
+    ) -> Result<Option<AuthenticatedKey>, AppError> {
+        Ok(Some(AuthenticatedKey {
+            tenant_id: self.tenant_id,
+            scopes: vec!["*".into()],
+        }))
+    }
+}
+
+fn create_test_state_with_tenant(tenant_id: Uuid) -> AppState {
     AppState::new(
         Arc::new(MockCalendarRepository::default()),
         Arc::new(PresentationMockEventRepo::default()),
+        Arc::new(PresentationMockApiKeyValidator { tenant_id }),
     )
+}
+
+fn create_test_state() -> AppState {
+    create_test_state_with_tenant(Uuid::new_v4())
 }
 
 #[tokio::test]
@@ -169,7 +201,13 @@ fn test_openapi_spec_generation() {
     assert_eq!(openapi.info.version, "0.1.0");
     assert!(openapi.paths.paths.contains_key("/health"));
     assert!(openapi.paths.paths.contains_key("/v1/calendars"));
+    assert!(openapi.paths.paths.contains_key("/v1/calendars/{id}"));
     assert!(openapi.paths.paths.contains_key("/v1/events"));
+    assert!(openapi.paths.paths.contains_key("/v1/events/{id}"));
+    assert!(openapi
+        .paths
+        .paths
+        .contains_key("/v1/events/{id}/exceptions"));
     assert!(openapi.paths.paths.contains_key("/v1/events/search"));
     assert!(openapi
         .paths
@@ -178,10 +216,10 @@ fn test_openapi_spec_generation() {
 }
 
 #[tokio::test]
-async fn test_create_and_get_calendar_via_http() {
-    let state = create_test_state();
-    let app = create_router(state);
+async fn test_create_and_get_and_patch_calendar_via_http() {
     let tenant_id = Uuid::new_v4();
+    let state = create_test_state_with_tenant(tenant_id);
+    let app = create_router(state);
 
     let cmd = CreateCalendarCommand {
         name: "Meeting Room A".to_string(),
@@ -195,18 +233,18 @@ async fn test_create_and_get_calendar_via_http() {
         .method("POST")
         .uri("/v1/calendars")
         .header(header::CONTENT_TYPE, "application/json")
-        .header(HEADER_TENANT_ID, tenant_id.to_string())
+        .header(HEADER_API_KEY, "test-api-key")
         .body(Body::from(payload))
         .unwrap();
 
-    let res = app.oneshot(req).await.unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::CREATED);
 }
 
 #[tokio::test]
 async fn test_create_event_with_idempotency_key_via_http() {
-    let state = create_test_state();
     let tenant_id = Uuid::new_v4();
+    let state = create_test_state_with_tenant(tenant_id);
 
     // Pre-create calendar
     let cal = Calendar::new(tenant_id, "Resource 1", "UTC", true, None);
@@ -233,8 +271,54 @@ async fn test_create_event_with_idempotency_key_via_http() {
         .method("POST")
         .uri("/v1/events")
         .header(header::CONTENT_TYPE, "application/json")
-        .header(HEADER_TENANT_ID, tenant_id.to_string())
+        .header(HEADER_API_KEY, "test-api-key")
         .header("idempotency-key", "req-unique-key-1234")
+        .body(Body::from(payload))
+        .unwrap();
+
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn test_create_event_exception_via_http() {
+    let tenant_id = Uuid::new_v4();
+    let state = create_test_state_with_tenant(tenant_id);
+
+    let now = Utc::now();
+    let recurring_event = Event::new(
+        tenant_id,
+        Uuid::new_v4(),
+        "Weekly All Hands",
+        None,
+        TimeRange::new(now, now + Duration::hours(1)).unwrap(),
+        "UTC",
+        Some("FREQ=WEEKLY;COUNT=10".to_string()),
+        crate::domain::models::EventStatus::Confirmed,
+        None,
+        serde_json::json!({}),
+    );
+    state
+        .event_repo
+        .create(tenant_id, &recurring_event)
+        .await
+        .unwrap();
+
+    let app = create_router(state);
+
+    let cmd = CreateEventExceptionCommand {
+        original_starts_at: now + Duration::days(7),
+        is_cancelled: true,
+        rescheduled_starts_at: None,
+        rescheduled_ends_at: None,
+    };
+    let payload = serde_json::to_string(&cmd).unwrap();
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/v1/events/{}/exceptions", recurring_event.id))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(HEADER_API_KEY, "test-api-key")
         .body(Body::from(payload))
         .unwrap();
 

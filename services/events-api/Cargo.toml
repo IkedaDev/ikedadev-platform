@@ -5,6 +5,10 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[features]
+default = []
+dev-auth = ["ikeda-core/dev-auth"]
+
 [dependencies]
 ikeda-core = { workspace = true }
 tokio = { workspace = true }

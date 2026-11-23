@@ -1,9 +1,12 @@
 use super::calendar_handlers::{self, *};
 use super::event_handlers::{self, *};
 use super::state::AppState;
-use crate::application::use_cases::{CreateCalendarCommand, CreateEventCommand};
+use crate::application::use_cases::{
+    CreateCalendarCommand, CreateEventCommand, CreateEventExceptionCommand, UpdateCalendarCommand,
+    UpdateEventCommand,
+};
 use crate::domain::models::{
-    AvailabilityResult, Calendar, Event, EventInstance, EventStatus, TimeRange,
+    AvailabilityResult, Calendar, Event, EventException, EventInstance, EventStatus, TimeRange,
 };
 use axum::{
     routing::{get, post},
@@ -33,12 +36,15 @@ pub struct HealthStatus {
         calendar_handlers::create_calendar,
         calendar_handlers::list_calendars,
         calendar_handlers::get_calendar,
+        calendar_handlers::patch_calendar,
+        calendar_handlers::delete_calendar,
         event_handlers::create_event,
         event_handlers::list_events_by_range,
         event_handlers::search_events,
         event_handlers::get_event,
         event_handlers::patch_event,
         event_handlers::delete_event,
+        event_handlers::create_event_exception,
         event_handlers::get_calendar_availability
     ),
     components(
@@ -49,12 +55,16 @@ pub struct HealthStatus {
             ApiResponse<Vec<Calendar>>,
             ApiResponse<Event>,
             ApiResponse<Vec<EventInstance>>,
+            ApiResponse<EventException>,
             ApiResponse<AvailabilityResult>,
             Calendar,
             CreateCalendarCommand,
+            UpdateCalendarCommand,
             Event,
             CreateEventCommand,
-            PatchEventPayload,
+            UpdateEventCommand,
+            CreateEventExceptionCommand,
+            EventException,
             EventInstance,
             EventStatus,
             TimeRange,
@@ -110,7 +120,12 @@ pub fn create_router(state: AppState) -> Router {
         .route("/health", get(health_check))
         // Calendars
         .route("/v1/calendars", post(create_calendar).get(list_calendars))
-        .route("/v1/calendars/{id}", get(get_calendar))
+        .route(
+            "/v1/calendars/{id}",
+            get(get_calendar)
+                .patch(patch_calendar)
+                .delete(delete_calendar),
+        )
         .route(
             "/v1/calendars/{id}/availability",
             get(get_calendar_availability),
@@ -122,6 +137,7 @@ pub fn create_router(state: AppState) -> Router {
             "/v1/events/{id}",
             get(get_event).patch(patch_event).delete(delete_event),
         )
+        .route("/v1/events/{id}/exceptions", post(create_event_exception))
         // Swagger UI
         .merge(SwaggerUi::new("/swagger-ui").url("/openapi.json", ApiDoc::openapi()))
         .with_state(state)
