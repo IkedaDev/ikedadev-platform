@@ -78,6 +78,28 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "identity_db" <<-EO
         true
     )
     ON CONFLICT (key_hash) DO NOTHING;
+
+    INSERT INTO tenant_users (tenant_id, keycloak_user_id, email, full_name, roles, is_active)
+    VALUES (
+        '${DEV_TENANT_ID}',
+        '22222222-2222-4222-8222-222222222222',
+        'admin@demo.ikedadev.com',
+        'Admin Demo Tenant',
+        ARRAY['platform:admin', 'tenant:admin', 'events:write', 'crm:write', 'catalog:write', 'identity:write'],
+        true
+    )
+    ON CONFLICT (keycloak_user_id) DO NOTHING;
+
+    INSERT INTO tenant_users (tenant_id, keycloak_user_id, email, full_name, roles, is_active)
+    VALUES (
+        '${DEV_TENANT_ID}',
+        '33333333-3333-4333-8333-333333333333',
+        'staff@demo.ikedadev.com',
+        'Staff Demo Tenant',
+        ARRAY['tenant:member', 'events:write', 'crm:write'],
+        true
+    )
+    ON CONFLICT (keycloak_user_id) DO NOTHING;
     COMMIT;
 EOSQL
 

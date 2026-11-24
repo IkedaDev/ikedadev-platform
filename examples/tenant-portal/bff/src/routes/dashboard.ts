@@ -1,15 +1,14 @@
 import { Hono } from 'hono';
 import { catalogClient } from '../clients/catalogClient.js';
 import { crmClient } from '../clients/crmClient.js';
-import type { RequestContext } from '../clients/http.js';
+import { getAuthRequestContext } from '../middleware/auth.js';
 import { listEnrichedBookings } from './bookings.js';
 
 export const dashboardRoutes = new Hono();
 
 // GET /api/dashboard
 dashboardRoutes.get('/', async (c) => {
-  const authorization = c.req.header('Authorization');
-  const ctx: RequestContext = authorization ? { authorization } : {};
+  const ctx = getAuthRequestContext(c);
 
   const now = new Date();
   const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);

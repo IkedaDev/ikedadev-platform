@@ -13,8 +13,8 @@ export function Modal({ open, title, onClose, children, footer }: ModalProps) {
   if (!open) return null;
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-backdrop">
+      <div className="modal-card">
         <div className="modal-header">
           <h3 className="modal-title">{title}</h3>
           <button

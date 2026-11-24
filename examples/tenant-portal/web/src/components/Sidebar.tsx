@@ -1,18 +1,21 @@
 import {
   CalendarClock,
   LayoutDashboard,
+  LogOut,
   Package,
   RefreshCw,
   ShieldCheck,
   Users,
 } from 'lucide-react';
-import type { BffHealth } from '../types/api';
+import type { AuthUser, BffHealth } from '../types/api';
 
 export type NavSection = 'dashboard' | 'clients' | 'catalog' | 'bookings' | 'identity';
 
 interface SidebarProps {
   active: NavSection;
   onSelect: (section: NavSection) => void;
+  user: AuthUser;
+  onLogout: () => void;
   health: BffHealth | null;
   healthLoading: boolean;
   onRefreshHealth: () => void;
@@ -29,6 +32,8 @@ const NAV_ITEMS: Array<{ id: NavSection; label: string; icon: typeof LayoutDashb
 export function Sidebar({
   active,
   onSelect,
+  user,
+  onLogout,
   health,
   healthLoading,
   onRefreshHealth,
@@ -46,7 +51,7 @@ export function Sidebar({
         <div className="brand-mark">IK</div>
         <div>
           <div className="brand-title">IkedaDev Portal</div>
-          <div className="brand-subtitle">Tenant BFF Example</div>
+          <div className="brand-subtitle">OIDC + JWT (Keycloak)</div>
         </div>
       </div>
 
@@ -67,7 +72,51 @@ export function Sidebar({
         })}
       </nav>
 
-      <div className="sidebar-footer">
+      <div className="sidebar-footer" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {/* Authenticated user card */}
+        <div className="health-box">
+          <div style={{ fontWeight: 600, color: '#f8fafc', fontSize: 13 }}>{user.name}</div>
+          <div style={{ color: '#94a3b8', fontSize: 11, marginBottom: 6, wordBreak: 'break-all' }}>
+            {user.email}
+          </div>
+          {user.tenant_id && (
+            <div style={{ color: '#64748b', fontSize: 10, marginBottom: 8 }}>
+              Tenant: <code>{user.tenant_id.slice(0, 8)}...</code>
+            </div>
+          )}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
+            {user.roles.slice(0, 3).map((role) => (
+              <span
+                key={role}
+                style={{
+                  fontSize: 10,
+                  padding: '2px 6px',
+                  borderRadius: 999,
+                  background: 'rgba(59, 130, 246, 0.2)',
+                  color: '#93c5fd',
+                }}
+              >
+                {role}
+              </span>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={onLogout}
+            style={{
+              width: '100%',
+              background: '#0f172a',
+              color: '#e2e8f0',
+              borderColor: '#334155',
+            }}
+          >
+            <LogOut size={13} />
+            Cerrar sesión
+          </button>
+        </div>
+
+        {/* Health status box */}
         <div className="health-box">
           <div className="health-header">
             <span>
@@ -94,7 +143,7 @@ export function Sidebar({
             <div className="upstream-grid">
               {Object.entries(health.upstreams).map(([name, info]) => (
                 <div key={name} className="upstream-item">
-                  <span className={`health-dot ${info.ok ? 'ok' : 'offline'}`} />
+                  <span className={`health-dot ${info?.ok ? 'ok' : 'offline'}`} />
                   <span>{name}</span>
                 </div>
               ))}

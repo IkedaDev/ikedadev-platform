@@ -57,7 +57,6 @@ export class ServiceHttpClient {
 
     const headers: Record<string, string> = {
       Accept: 'application/json',
-      'X-Api-Key': this.apiKey,
       ...options?.extraHeaders,
     };
 
@@ -65,8 +64,14 @@ export class ServiceHttpClient {
       headers['Content-Type'] = 'application/json';
     }
 
+    // Production auth priority:
+    // - When a user's Keycloak Bearer JWT is present, forward ONLY `Authorization: Bearer`
+    //   so Rust microservices validate RS256 JWKS and extract tenant_id, user_id, and roles.
+    // - Otherwise (e.g. CLI seed script), authenticate M2M via `X-Api-Key`.
     if (options?.ctx?.authorization) {
       headers['Authorization'] = options.ctx.authorization;
+    } else {
+      headers['X-Api-Key'] = this.apiKey;
     }
 
     let response: Response;

@@ -57,9 +57,8 @@ services:
       DATABASE_MIN_CONNECTIONS: "3"
       RUST_LOG: "info,events_api=debug,tower_http=info"
       QSTASH_TOKEN: "mock-dev-token"
-      # Optional Keycloak JWT validation (set in .env if validating Bearer JWTs)
-      JWKS_URI: "${JWKS_URI:-}"
-      JWT_ISSUER: "${JWT_ISSUER:-}"
+      JWKS_URI: "${JWKS_URI:-http://keycloak:8080/realms/ikeda/protocol/openid-connect/certs}"
+      JWT_ISSUER: "${JWT_ISSUER:-http://localhost:8180/realms/ikeda}"
     ports:
       - "8080:8080"
 
@@ -83,8 +82,8 @@ services:
       DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/crm_db?sslmode=disable"
       IDENTITY_DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/identity_db?sslmode=disable"
       RUST_LOG: "info,crm_api=debug,tower_http=info"
-      JWKS_URI: "${JWKS_URI:-}"
-      JWT_ISSUER: "${JWT_ISSUER:-}"
+      JWKS_URI: "${JWKS_URI:-http://keycloak:8080/realms/ikeda/protocol/openid-connect/certs}"
+      JWT_ISSUER: "${JWT_ISSUER:-http://localhost:8180/realms/ikeda}"
     ports:
       - "8081:8081"
 
@@ -109,9 +108,9 @@ services:
       KEYCLOAK_BASE_URL: "http://keycloak:8080"
       KEYCLOAK_REALM: "${KEYCLOAK_REALM:-ikeda}"
       KEYCLOAK_CLIENT_ID: "${KEYCLOAK_CLIENT_ID:-identity-api-admin}"
-      KEYCLOAK_CLIENT_SECRET: "${KEYCLOAK_CLIENT_SECRET:-}"
-      JWKS_URI: "${JWKS_URI:-}"
-      JWT_ISSUER: "${JWT_ISSUER:-}"
+      KEYCLOAK_CLIENT_SECRET: "${KEYCLOAK_CLIENT_SECRET:-ikeda-identity-admin-secret-2026}"
+      JWKS_URI: "${JWKS_URI:-http://keycloak:8080/realms/ikeda/protocol/openid-connect/certs}"
+      JWT_ISSUER: "${JWT_ISSUER:-http://localhost:8180/realms/ikeda}"
       RUST_LOG: "info,identity_api=debug,tower_http=info"
     ports:
       - "8082:8082"
@@ -135,28 +134,32 @@ services:
       HOST: "0.0.0.0"
       DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/catalog_db?sslmode=disable"
       IDENTITY_DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/identity_db?sslmode=disable"
-      JWKS_URI: "${JWKS_URI:-}"
-      JWT_ISSUER: "${JWT_ISSUER:-}"
+      JWKS_URI: "${JWKS_URI:-http://keycloak:8080/realms/ikeda/protocol/openid-connect/certs}"
+      JWT_ISSUER: "${JWT_ISSUER:-http://localhost:8180/realms/ikeda}"
       RUST_LOG: "info,catalog_api=debug,tower_http=info"
     ports:
       - "8083:8083"
 
   # ============================================================================
-  # 6. Keycloak Dev Server (Profiles: keycloak | full - Port 8180)
+  # 6. Keycloak Dev Server with Auto-Imported `ikeda` Realm (Port 8180)
   #    Start with: docker compose --profile keycloak up -d
   # ============================================================================
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
     container_name: ikedadev-keycloak
     profiles: ["keycloak", "full"]
-    command: start-dev
+    command: start-dev --import-realm
     restart: unless-stopped
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin_dev_password
       KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME: "http://localhost:8180"
+      KC_HOSTNAME_STRICT: "false"
     ports:
       - "8180:8080"
+    volumes:
+      - ./deploy/keycloak/ikeda-realm.json:/opt/keycloak/data/import/ikeda-realm.json:ro
 
 volumes:
   postgres_data:

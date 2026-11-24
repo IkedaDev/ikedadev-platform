@@ -23,9 +23,10 @@ const createBookingSchema = z.object({
   notes: z.string().max(1000).optional(),
 });
 
-function getRequestContext(c: { req: { header: (name: string) => string | undefined } }): RequestContext {
-  const authorization = c.req.header('Authorization');
-  return authorization ? { authorization } : {};
+import { getAuthRequestContext } from '../middleware/auth.js';
+
+function getRequestContext(c: Parameters<typeof getAuthRequestContext>[0]): RequestContext {
+  return getAuthRequestContext(c);
 }
 
 function getItemDurationMinutes(item: CatalogItem): number {

@@ -17,10 +17,7 @@ const createClientSchema = z.object({
 
 const updateClientSchema = createClientSchema.partial();
 
-function getCtx(c: { req: { header: (name: string) => string | undefined } }): RequestContext {
-  const authorization = c.req.header('Authorization');
-  return authorization ? { authorization } : {};
-}
+import { getAuthRequestContext as getCtx } from '../middleware/auth.js';
 
 export const clientsRoutes = new Hono();
 

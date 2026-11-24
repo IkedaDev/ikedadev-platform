@@ -3,12 +3,15 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
+import { checkKeycloakHealth } from './auth/sessionStore.js';
 import { catalogClient } from './clients/catalogClient.js';
 import { crmClient } from './clients/crmClient.js';
 import { eventsClient } from './clients/eventsClient.js';
 import { UpstreamApiError } from './clients/http.js';
 import { identityClient } from './clients/identityClient.js';
 import { config } from './config.js';
+import { requireAuth } from './middleware/auth.js';
+import { authRoutes } from './routes/auth.js';
 import { bookingsRoutes } from './routes/bookings.js';
 import { calendarsRoutes } from './routes/calendars.js';
 import { categoriesRoutes, itemsRoutes } from './routes/catalog.js';
@@ -39,16 +42,17 @@ app.use(
   }),
 );
 
-// Health endpoint with upstream microservice checks
+// Public Health endpoint with upstream microservice & Keycloak checks
 app.get('/health', async (c) => {
-  const [events, crm, identity, catalog] = await Promise.all([
+  const [events, crm, identity, catalog, keycloak] = await Promise.all([
     eventsClient.health(),
     crmClient.health(),
     identityClient.health(),
     catalogClient.health(),
+    checkKeycloakHealth(),
   ]);
 
-  const services = { events, crm, identity, catalog };
+  const services = { events, crm, identity, catalog, keycloak };
   const allHealthy = Object.values(services).every((s) => s.ok);
 
   return c.json({
@@ -58,6 +62,12 @@ app.get('/health', async (c) => {
     upstreams: services,
   });
 });
+
+// OIDC Auth Routes (Keycloak Authorization Code + PKCE + HttpOnly Session)
+app.route('/auth', authRoutes);
+
+// Protect all `/api/*` endpoints with Keycloak session/JWT authentication
+app.use('/api/*', requireAuth);
 
 // BFF Orchestration & CRUD Routes
 app.route('/api/dashboard', dashboardRoutes);
@@ -116,6 +126,7 @@ serve(
   (info) => {
     console.log(`🚀 Tenant Portal BFF escuchando en http://localhost:${info.port}`);
     console.log(`   CORS_ORIGIN:      ${config.CORS_ORIGIN}`);
+    console.log(`   KEYCLOAK_REALM:   ${config.KEYCLOAK_PUBLIC_URL}/realms/${config.KEYCLOAK_REALM}`);
     console.log(`   EVENTS_API_URL:   ${config.EVENTS_API_URL}`);
     console.log(`   CRM_API_URL:      ${config.CRM_API_URL}`);
     console.log(`   IDENTITY_API_URL: ${config.IDENTITY_API_URL}`);

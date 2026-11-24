@@ -17,10 +17,7 @@ const createApiKeySchema = z.object({
   expires_at: z.string().datetime().optional().nullable(),
 });
 
-function getCtx(c: { req: { header: (name: string) => string | undefined } }): RequestContext {
-  const authorization = c.req.header('Authorization');
-  return authorization ? { authorization } : {};
-}
+import { getAuthRequestContext as getCtx } from '../middleware/auth.js';
 
 export const identityRoutes = new Hono();
 

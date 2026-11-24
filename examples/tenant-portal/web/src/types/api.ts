@@ -22,6 +22,20 @@ export interface Criteria {
   pagination?: { page?: number; limit?: number };
 }
 
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+  tenant_id: string | null;
+  roles: string[];
+}
+
+export interface AuthMeResponse {
+  authenticated: boolean;
+  user: AuthUser | null;
+  expiresAt?: string;
+}
+
 export interface BffHealth {
   status: 'healthy' | 'degraded';
   service: string;
@@ -31,6 +45,7 @@ export interface BffHealth {
     crm: { ok: boolean; status: number };
     identity: { ok: boolean; status: number };
     catalog: { ok: boolean; status: number };
+    keycloak?: { ok: boolean; status: number };
   };
 }
 

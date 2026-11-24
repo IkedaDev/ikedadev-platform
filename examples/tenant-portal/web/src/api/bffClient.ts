@@ -1,5 +1,6 @@
 import type {
   ApiKeySummary,
+  AuthMeResponse,
   AvailabilityResult,
   BffHealth,
   Calendar,
@@ -59,6 +60,7 @@ async function request<T>(
     res = await fetch(url.toString(), {
       method,
       headers,
+      credentials: 'include',
       body: options?.body !== undefined ? JSON.stringify(options.body) : undefined,
     });
   } catch (err) {
@@ -87,6 +89,12 @@ async function request<T>(
 
 export const bffClient = {
   baseUrl: BASE_URL,
+
+  loginUrl: () => `${BASE_URL}/auth/login`,
+
+  getMe: () => request<AuthMeResponse>('GET', '/auth/me'),
+
+  logout: () => request<{ success: boolean; logoutUrl: string }>('POST', '/auth/logout'),
 
   health: () => request<BffHealth>('GET', '/health'),
 

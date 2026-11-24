@@ -90,10 +90,7 @@ const updateItemSchema = z.object({
   metadata: z.record(z.unknown()).optional(),
 });
 
-function getCtx(c: { req: { header: (name: string) => string | undefined } }): RequestContext {
-  const authorization = c.req.header('Authorization');
-  return authorization ? { authorization } : {};
-}
+import { getAuthRequestContext as getCtx } from '../middleware/auth.js';
 
 export const categoriesRoutes = new Hono();
 
