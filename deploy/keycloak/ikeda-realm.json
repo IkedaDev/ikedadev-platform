@@ -32,7 +32,8 @@
       { "name": "events:write", "description": "Write access to events-api" },
       { "name": "crm:write", "description": "Write access to crm-api" },
       { "name": "catalog:write", "description": "Write access to catalog-api" },
-      { "name": "identity:write", "description": "Write access to identity-api" }
+      { "name": "identity:write", "description": "Write access to identity-api" },
+      { "name": "bookings:write", "description": "Write access to bookings-api" }
     ]
   },
   "clients": [
@@ -137,7 +138,8 @@
         "events:write",
         "crm:write",
         "catalog:write",
-        "identity:write"
+        "identity:write",
+        "bookings:write"
       ]
     },
     {
@@ -161,7 +163,8 @@
       "realmRoles": [
         "tenant:member",
         "events:write",
-        "crm:write"
+        "crm:write",
+        "bookings:write"
       ]
     }
   ]

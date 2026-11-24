@@ -4,6 +4,7 @@ import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { checkKeycloakHealth } from './auth/sessionStore.js';
+import { bookingsClient } from './clients/bookingsClient.js';
 import { catalogClient } from './clients/catalogClient.js';
 import { crmClient } from './clients/crmClient.js';
 import { eventsClient } from './clients/eventsClient.js';
@@ -37,22 +38,23 @@ app.use(
       return '';
     },
     allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization'],
+    allowHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key'],
     credentials: true,
   }),
 );
 
 // Public Health endpoint with upstream microservice & Keycloak checks
 app.get('/health', async (c) => {
-  const [events, crm, identity, catalog, keycloak] = await Promise.all([
+  const [events, crm, identity, catalog, bookings, keycloak] = await Promise.all([
     eventsClient.health(),
     crmClient.health(),
     identityClient.health(),
     catalogClient.health(),
+    bookingsClient.health(),
     checkKeycloakHealth(),
   ]);
 
-  const services = { events, crm, identity, catalog, keycloak };
+  const services = { events, crm, identity, catalog, bookings, keycloak };
   const allHealthy = Object.values(services).every((s) => s.ok);
 
   return c.json({
@@ -131,5 +133,6 @@ serve(
     console.log(`   CRM_API_URL:      ${config.CRM_API_URL}`);
     console.log(`   IDENTITY_API_URL: ${config.IDENTITY_API_URL}`);
     console.log(`   CATALOG_API_URL:  ${config.CATALOG_API_URL}`);
+    console.log(`   BOOKINGS_API_URL: ${config.BOOKINGS_API_URL}`);
   },
 );

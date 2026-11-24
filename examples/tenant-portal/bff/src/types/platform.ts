@@ -349,31 +349,131 @@ export interface CreateApiKeyCommand {
 }
 
 // ============================================================================
+// Bookings API (bookings-api)
+// ============================================================================
+
+export type BookingStatus =
+  | 'PENDING'
+  | 'SCHEDULED'
+  | 'IN_PROGRESS'
+  | 'COMPLETED'
+  | 'CANCELLED'
+  | 'NO_SHOW';
+
+export interface BookingItemRecord {
+  id: string;
+  tenant_id: string;
+  booking_id: string;
+  catalog_item_id: string;
+  variant_id?: string | null;
+  name_snapshot: string;
+  sku_snapshot?: string | null;
+  quantity: number;
+  unit_price_snapshot: number;
+  tax_rate_bps: number;
+  tax_included: boolean;
+  line_subtotal: number;
+  line_tax: number;
+  line_total: number;
+  duration_minutes_snapshot: number;
+  buffer_minutes_snapshot: number;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface BookingRecord {
+  id: string;
+  tenant_id: string;
+  booking_code: string;
+  client_id: string;
+  calendar_id?: string | null;
+  event_id?: string | null;
+  starts_at: string;
+  ends_at: string;
+  timezone: string;
+  status: BookingStatus;
+  subtotal: number;
+  tax_total: number;
+  total_price: number;
+  total_duration_minutes: number;
+  currency: string;
+  notes?: string | null;
+  cancellation_reason?: string | null;
+  cancelled_at?: string | null;
+  completed_at?: string | null;
+  metadata: Record<string, unknown>;
+  created_by?: string | null;
+  updated_by?: string | null;
+  items: BookingItemRecord[];
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
+}
+
+export interface BookingItemSnapshotInput {
+  catalog_item_id: string;
+  variant_id?: string | null;
+  name_snapshot: string;
+  sku_snapshot?: string | null;
+  quantity: number;
+  unit_price_snapshot: number;
+  tax_rate_bps: number;
+  tax_included: boolean;
+  duration_minutes_snapshot: number;
+  buffer_minutes_snapshot: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CreateBookingPayload {
+  client_id: string;
+  calendar_id?: string | null;
+  event_id?: string | null;
+  starts_at: string;
+  ends_at: string;
+  timezone?: string;
+  status?: 'PENDING' | 'SCHEDULED';
+  currency?: string;
+  notes?: string | null;
+  metadata?: Record<string, unknown>;
+  items: BookingItemSnapshotInput[];
+}
+
+export interface TransitionBookingStatusPayload {
+  status: BookingStatus;
+  cancellation_reason?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+// ============================================================================
 // BFF Enriched Models
 // ============================================================================
 
-export interface EnrichedBookingItem {
-  id: string;
-  name: string;
-  item_type: 'SERVICE' | 'PRODUCT' | 'BUNDLE';
-  base_price: number;
-  currency: string;
-  duration_minutes?: number;
-}
-
 export interface EnrichedBooking {
   id: string;
-  calendar_id: string;
+  booking_code: string;
+  calendar_id: string | null;
   calendar_name: string | null;
-  title: string;
+  event_id: string | null;
   starts_at: string;
   ends_at: string;
-  status: EventStatus;
-  client_id: string | null;
-  client_name: string | null;
-  client_email: string | null;
-  items: EnrichedBookingItem[];
+  timezone: string;
+  status: BookingStatus;
+  client: {
+    id: string;
+    full_name: string;
+    email: string | null;
+    phone: string | null;
+  } | null;
+  items: BookingItemRecord[];
+  subtotal: number;
+  tax_total: number;
   total_price: number;
+  total_duration_minutes: number;
   currency: string;
   notes: string | null;
+  cancellation_reason: string | null;
+  cancelled_at: string | null;
+  completed_at: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
 }

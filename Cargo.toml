@@ -6,6 +6,7 @@ members = [
     "services/crm-api",
     "services/identity-api",
     "services/catalog-api",
+    "services/bookings-api",
 ]
 
 [workspace.package]

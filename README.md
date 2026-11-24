@@ -20,13 +20,14 @@ ikedadev-platform/
 │   ├── events-api/                      # Calendarios, eventos, recurrencia RFC 5545 y disponibilidad
 │   ├── crm-api/                         # Clientes finales multi-tenant, JSONB metadata y búsqueda Criteria
 │   ├── identity-api/                    # Tenants, API Keys M2M (SHA-256) y usuarios sincronizados con Keycloak
-│   └── catalog-api/                     # Categorías, servicios, productos, bundles, variantes y batch lookup
+│   ├── catalog-api/                     # Categorías, servicios, productos, bundles, variantes y batch lookup
+│   └── bookings-api/                    # Reservas multi-servicio con snapshots congelados, estados e idempotencia
 ├── deploy/
 │   ├── keycloak/ikeda-realm.json        # Realm `ikeda` auto-importado (roles, clientes OIDC y usuarios demo)
 │   ├── k8s/base/                        # Manifiestos Kustomize genéricos (Deployment, Service, ConfigMap)
 │   └── argo/workflow-template.yaml      # Plantilla declarativa para Argo Workflows
 ├── scripts/
-│   ├── init-databases.sh                # Crea las 4 DBs, aplica migraciones y siembra tenant/key local
+│   ├── init-databases.sh                # Crea las 5 DBs, aplica migraciones y siembra tenant/key local
 │   ├── test-api.sh / test-api.ps1       # Scripts de smoke test local
 ├── docs/
 │   └── platform-documentation.html      # Documentación técnica interactiva de la plataforma
@@ -39,7 +40,8 @@ ikedadev-platform/
     ├── events-api.yml                   # Build OCI multi-stage (cargo-chef) y push a ghcr.io
     ├── crm-api.yml                      # Build OCI multi-stage (cargo-chef) y push a ghcr.io
     ├── identity-api.yml                 # Build OCI multi-stage (cargo-chef) y push a ghcr.io
-    └── catalog-api.yml                  # Build OCI multi-stage (cargo-chef) y push a ghcr.io
+    ├── catalog-api.yml                  # Build OCI multi-stage (cargo-chef) y push a ghcr.io
+    └── bookings-api.yml                 # Build OCI multi-stage (cargo-chef) y push a ghcr.io
 ```
 
 ---
@@ -52,8 +54,9 @@ ikedadev-platform/
 | **`crm-api`** | `8081` | `crm_db` | `http://localhost:8081/swagger-ui` | `http://localhost:8081/openapi.json` | `http://localhost:8081/health` |
 | **`identity-api`** | `8082` | `identity_db` | `http://localhost:8082/swagger-ui` | `http://localhost:8082/openapi.json` | `http://localhost:8082/health` |
 | **`catalog-api`** | `8083` | `catalog_db` | `http://localhost:8083/swagger-ui` | `http://localhost:8083/openapi.json` | `http://localhost:8083/health` |
+| **`bookings-api`** | `8084` | `bookings_db` | `http://localhost:8084/swagger-ui` | `http://localhost:8084/openapi.json` | `http://localhost:8084/health` |
 | **Keycloak (`ikeda`)** | `8180` | In-memory (dev) | — | `http://localhost:8180/realms/ikeda/.well-known/openid-configuration` | `http://localhost:8180` |
-| **PostgreSQL 17** | `5432` | Multi-DB (`events_db`, `crm_db`, `identity_db`, `catalog_db`) | — | — | `pg_isready` |
+| **PostgreSQL 17** | `5432` | Multi-DB (`events_db`, `crm_db`, `identity_db`, `catalog_db`, `bookings_db`) | — | — | `pg_isready` |
 | **Tenant Portal BFF** | `4000` | — (stateless + Keycloak) | — | — | `http://localhost:4000/health` |
 | **Tenant Portal Web** | `5173` | — | — | — | `http://localhost:5173` |
 
@@ -83,7 +86,7 @@ CREATE POLICY tenant_isolation_<tabla> ON <tabla>
 ```
 
 - Cada repositorio SQLx abre una transacción mediante `begin_tenant_tx(pool, tenant_id)` ejecutando `SELECT set_config('app.current_tenant', $1, true);` (local a la transacción, seguro con connection poolers como PgBouncer/Neon).
-- `events-api`, `crm-api` y `catalog-api` validan `X-Api-Key` contra `IDENTITY_DATABASE_URL` mediante la función `SECURITY DEFINER` `authenticate_api_key($1)` envuelta en `CachedApiKeyValidator` (con fallback a `DATABASE_URL` solo para pruebas locales aisladas).
+- `events-api`, `crm-api`, `catalog-api` y `bookings-api` validan `X-Api-Key` contra `IDENTITY_DATABASE_URL` mediante la función `SECURITY DEFINER` `authenticate_api_key($1)` envuelta en `CachedApiKeyValidator` (con fallback a `DATABASE_URL` solo para pruebas locales aisladas).
 - El traductor de `Criteria` a SQLx (`ikeda-core` con feature `sqlx`) valida todos los campos contra una whitelist por entidad, escapa wildcards `ILIKE` (`ESCAPE '\'`), limita la profundidad de anidamiento y usa parámetros vinculados (`push_bind`).
 - El feature flag `dev-auth` está **deshabilitado por defecto** en todos los `Cargo.toml` y `Dockerfile`.
 
@@ -114,6 +117,7 @@ cargo run -p events-api
 cargo run -p crm-api
 cargo run -p identity-api
 cargo run -p catalog-api
+cargo run -p bookings-api
 ```
 
 ### Portal de Ejemplo (`examples/tenant-portal`)
@@ -162,10 +166,10 @@ cd examples/tenant-portal/web && npx tsc --noEmit
 
 ## 🔄 CI/CD Modular (GitHub Actions)
 
-Los 5 workflows en `.github/workflows/` operan de forma independiente con filtros `paths:`:
+Los 6 workflows en `.github/workflows/` operan de forma independiente con filtros `paths:`:
 
 1. **[`ci.yml`](.github/workflows/ci.yml):** Quality Gate en PRs y pushes a `main`/`develop` (`cargo fmt`, `cargo clippy -D warnings`, `cargo test --workspace --lib`).
-2. **[`events-api.yml`](.github/workflows/events-api.yml), [`crm-api.yml`](.github/workflows/crm-api.yml), [`identity-api.yml`](.github/workflows/identity-api.yml), [`catalog-api.yml`](.github/workflows/catalog-api.yml):** Compilan cada servicio con `cargo-chef` y Docker Buildx únicamente cuando cambia su carpeta, `crates/ikeda-core`, `Cargo.toml` o `Cargo.lock`, publicando imágenes inmutables en `ghcr.io` etiquetadas con `prod-<short-sha>` / `qa-<short-sha>` y bloque listo para desplegar en Google Cloud Run o Kubernetes ([`deploy/k8s/base`](deploy/k8s/base), [`deploy/argo`](deploy/argo)).
+2. **[`events-api.yml`](.github/workflows/events-api.yml), [`crm-api.yml`](.github/workflows/crm-api.yml), [`identity-api.yml`](.github/workflows/identity-api.yml), [`catalog-api.yml`](.github/workflows/catalog-api.yml), [`bookings-api.yml`](.github/workflows/bookings-api.yml):** Compilan cada servicio con `cargo-chef` y Docker Buildx únicamente cuando cambia su carpeta, `crates/ikeda-core`, `Cargo.toml` o `Cargo.lock`, publicando imágenes inmutables en `ghcr.io` etiquetadas con `prod-<short-sha>` / `qa-<short-sha>` y bloque listo para desplegar en Google Cloud Run o Kubernetes ([`deploy/k8s/base`](deploy/k8s/base), [`deploy/argo`](deploy/argo)).
 
 ---
 
@@ -176,4 +180,5 @@ npx openapi-typescript http://localhost:8080/openapi.json -o src/api/events.d.ts
 npx openapi-typescript http://localhost:8081/openapi.json -o src/api/crm.d.ts
 npx openapi-typescript http://localhost:8082/openapi.json -o src/api/identity.d.ts
 npx openapi-typescript http://localhost:8083/openapi.json -o src/api/catalog.d.ts
+npx openapi-typescript http://localhost:8084/openapi.json -o src/api/bookings.d.ts
 ```

@@ -45,6 +45,7 @@ export interface BffHealth {
     crm: { ok: boolean; status: number };
     identity: { ok: boolean; status: number };
     catalog: { ok: boolean; status: number };
+    bookings?: { ok: boolean; status: number };
     keycloak?: { ok: boolean; status: number };
   };
 }
@@ -118,30 +119,63 @@ export interface AvailabilityResult {
   busy_slots: TimeRange[];
 }
 
-export interface EnrichedBookingItem {
+export type BookingStatus =
+  | 'PENDING'
+  | 'SCHEDULED'
+  | 'IN_PROGRESS'
+  | 'COMPLETED'
+  | 'CANCELLED'
+  | 'NO_SHOW';
+
+export interface BookingItemSnapshot {
   id: string;
-  name: string;
-  item_type: CatalogItemType;
-  base_price: number;
-  currency: string;
-  duration_minutes?: number;
+  tenant_id: string;
+  booking_id: string;
+  catalog_item_id: string;
+  variant_id?: string | null;
+  name_snapshot: string;
+  sku_snapshot?: string | null;
+  quantity: number;
+  unit_price_snapshot: number;
+  tax_rate_bps: number;
+  tax_included: boolean;
+  line_subtotal: number;
+  line_tax: number;
+  line_total: number;
+  duration_minutes_snapshot: number;
+  buffer_minutes_snapshot: number;
+  metadata: Record<string, unknown>;
+  created_at: string;
 }
 
 export interface EnrichedBooking {
   id: string;
-  calendar_id: string;
+  booking_code: string;
+  calendar_id: string | null;
   calendar_name: string | null;
-  title: string;
+  event_id: string | null;
   starts_at: string;
   ends_at: string;
-  status: 'CONFIRMED' | 'TENTATIVE' | 'CANCELLED';
-  client_id: string | null;
-  client_name: string | null;
-  client_email: string | null;
-  items: EnrichedBookingItem[];
+  timezone: string;
+  status: BookingStatus;
+  client: {
+    id: string;
+    full_name: string;
+    email: string | null;
+    phone: string | null;
+  } | null;
+  items: BookingItemSnapshot[];
+  subtotal: number;
+  tax_total: number;
   total_price: number;
+  total_duration_minutes: number;
   currency: string;
   notes: string | null;
+  cancellation_reason: string | null;
+  cancelled_at: string | null;
+  completed_at: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
 }
 
 export interface DashboardSummary {

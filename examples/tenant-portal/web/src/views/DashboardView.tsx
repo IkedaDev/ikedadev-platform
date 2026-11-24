@@ -2,7 +2,22 @@ import { CalendarClock, DollarSign, Package, RefreshCw, Users } from 'lucide-rea
 import { useCallback, useEffect, useState } from 'react';
 import { bffClient } from '../api/bffClient';
 import { StatusBadge, formatDateTime, formatMoney } from '../components/StatusBadge';
-import type { DashboardSummary } from '../types/api';
+import type { BookingStatus, DashboardSummary } from '../types/api';
+
+function bookingStatusTone(status: BookingStatus): 'green' | 'amber' | 'red' | 'blue' | 'gray' {
+  switch (status) {
+    case 'COMPLETED':
+      return 'green';
+    case 'SCHEDULED':
+    case 'IN_PROGRESS':
+      return 'blue';
+    case 'PENDING':
+      return 'amber';
+    case 'CANCELLED':
+    case 'NO_SHOW':
+      return 'red';
+  }
+}
 
 export function DashboardView() {
   const [data, setData] = useState<DashboardSummary | null>(null);
@@ -32,7 +47,8 @@ export function DashboardView() {
         <div>
           <h1 className="page-title">Dashboard General</h1>
           <p className="page-subtitle">
-            Resumen consolidado en paralelo desde crm-api, catalog-api y events-api vía BFF.
+            Resumen consolidado en paralelo desde crm-api, catalog-api, events-api y bookings-api
+            vía BFF.
           </p>
         </div>
         <button type="button" className="btn btn-secondary" onClick={load} disabled={loading}>
@@ -81,14 +97,14 @@ export function DashboardView() {
               ? '—'
               : formatMoney(data?.kpis.upcomingRevenue ?? 0, data?.kpis.currency ?? 'CLP')}
           </div>
-          <div className="kpi-hint">Suma calculada desde metadata de reservas</div>
+          <div className="kpi-hint">Total calculado por bookings-api (reservas activas)</div>
         </div>
       </div>
 
       <div className="card">
         <div className="section-header">
-          <h2 className="section-title">Próximas Citas Enriquecidas</h2>
-          <StatusBadge label="Orquestación BFF (Events + CRM + Catalog)" tone="blue" />
+          <h2 className="section-title">Próximas Reservas</h2>
+          <StatusBadge label="Orquestación BFF (Bookings + Events + CRM + Catalog)" tone="blue" />
         </div>
 
         {loading ? (
@@ -103,9 +119,10 @@ export function DashboardView() {
             <table>
               <thead>
                 <tr>
+                  <th>Código</th>
                   <th>Fecha / Hora</th>
                   <th>Cliente</th>
-                  <th>Servicios / Ítems</th>
+                  <th>Ítems Congelados</th>
                   <th>Calendario</th>
                   <th>Total</th>
                   <th>Estado</th>
@@ -115,45 +132,45 @@ export function DashboardView() {
                 {data.upcomingBookings.map((booking) => (
                   <tr key={booking.id}>
                     <td>
+                      <code style={{ fontSize: 12, fontWeight: 600 }}>{booking.booking_code}</code>
+                    </td>
+                    <td>
                       <div style={{ fontWeight: 600 }}>{formatDateTime(booking.starts_at)}</div>
                       <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                        hasta {formatDateTime(booking.ends_at)}
+                        {booking.total_duration_minutes} min · hasta{' '}
+                        {formatDateTime(booking.ends_at)}
                       </div>
                     </td>
                     <td>
-                      <div style={{ fontWeight: 500 }}>{booking.client_name ?? 'Sin cliente'}</div>
-                      {booking.client_email && (
+                      <div style={{ fontWeight: 500 }}>
+                        {booking.client?.full_name ?? 'Sin cliente'}
+                      </div>
+                      {booking.client?.email && (
                         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                          {booking.client_email}
+                          {booking.client.email}
                         </div>
                       )}
                     </td>
                     <td>
-                      {booking.items.length > 0 ? (
-                        <div className="btn-row">
-                          {booking.items.map((item) => (
-                            <StatusBadge key={item.id} label={item.name} tone="gray" />
-                          ))}
-                        </div>
-                      ) : (
-                        <span style={{ color: 'var(--text-muted)' }}>{booking.title}</span>
-                      )}
+                      <div className="btn-row">
+                        {booking.items.map((item) => (
+                          <StatusBadge
+                            key={item.id}
+                            label={`${item.name_snapshot}${item.quantity > 1 ? ` ×${item.quantity}` : ''}`}
+                            tone="gray"
+                          />
+                        ))}
+                      </div>
                     </td>
-                    <td>{booking.calendar_name ?? booking.calendar_id.slice(0, 8)}</td>
+                    <td>
+                      {booking.calendar_name ??
+                        (booking.calendar_id ? booking.calendar_id.slice(0, 8) : '—')}
+                    </td>
                     <td style={{ fontWeight: 600 }}>
                       {formatMoney(booking.total_price, booking.currency)}
                     </td>
                     <td>
-                      <StatusBadge
-                        label={booking.status}
-                        tone={
-                          booking.status === 'CONFIRMED'
-                            ? 'green'
-                            : booking.status === 'TENTATIVE'
-                              ? 'amber'
-                              : 'red'
-                        }
-                      />
+                      <StatusBadge label={booking.status} tone={bookingStatusTone(booking.status)} />
                     </td>
                   </tr>
                 ))}

@@ -10,6 +10,7 @@ set -eu
 #   - crm_db
 #   - identity_db
 #   - catalog_db
+#   - bookings_db
 # Applies all SQL migrations from /migrations/<service>/ and seeds a local dev
 # tenant + M2M API key in identity_db for immediate local testing.
 # ==============================================================================
@@ -24,6 +25,9 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
 
     SELECT 'CREATE DATABASE catalog_db'
     WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'catalog_db')\gexec
+
+    SELECT 'CREATE DATABASE bookings_db'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'bookings_db')\gexec
 EOSQL
 
 apply_migrations() {
@@ -46,6 +50,7 @@ apply_migrations "events_db"   "/migrations/events"
 apply_migrations "crm_db"      "/migrations/crm"
 apply_migrations "identity_db" "/migrations/identity"
 apply_migrations "catalog_db"  "/migrations/catalog"
+apply_migrations "bookings_db" "/migrations/bookings"
 
 # Seed a deterministic local development tenant + API key in identity_db
 DEV_TENANT_ID="11111111-1111-4111-8111-111111111111"
@@ -74,7 +79,7 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "identity_db" <<-EO
         'Local Tenant Portal BFF Key',
         '${DEV_API_KEY_PREFIX}',
         '${DEV_API_KEY_HASH}',
-        ARRAY['tenant:admin', 'platform:admin', 'events:write', 'crm:write', 'catalog:write', 'identity:write'],
+        ARRAY['tenant:admin', 'platform:admin', 'events:write', 'crm:write', 'catalog:write', 'identity:write', 'bookings:write'],
         true
     )
     ON CONFLICT (key_hash) DO NOTHING;
@@ -85,7 +90,7 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "identity_db" <<-EO
         '22222222-2222-4222-8222-222222222222',
         'admin@demo.ikedadev.com',
         'Admin Demo Tenant',
-        ARRAY['platform:admin', 'tenant:admin', 'events:write', 'crm:write', 'catalog:write', 'identity:write'],
+        ARRAY['platform:admin', 'tenant:admin', 'events:write', 'crm:write', 'catalog:write', 'identity:write', 'bookings:write'],
         true
     )
     ON CONFLICT (keycloak_user_id) DO NOTHING;
@@ -96,11 +101,11 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "identity_db" <<-EO
         '33333333-3333-4333-8333-333333333333',
         'staff@demo.ikedadev.com',
         'Staff Demo Tenant',
-        ARRAY['tenant:member', 'events:write', 'crm:write'],
+        ARRAY['tenant:member', 'events:write', 'crm:write', 'bookings:write'],
         true
     )
     ON CONFLICT (keycloak_user_id) DO NOTHING;
     COMMIT;
 EOSQL
 
-echo ">>> [init-databases] All 4 databases initialized and local dev key ready!"
+echo ">>> [init-databases] All 5 databases initialized and local dev key ready!"

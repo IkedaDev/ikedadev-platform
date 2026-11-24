@@ -34,13 +34,17 @@ dashboardRoutes.get('/', async (c) => {
       {
         start: now.toISOString(),
         end: in30Days.toISOString(),
+        limit: 50,
       },
       ctx,
     ),
   ]);
 
-  const upcomingRevenue = upcomingBookings.reduce((sum, b) => sum + b.total_price, 0);
-  const currency = upcomingBookings[0]?.currency ?? catalogPage.data[0]?.currency ?? 'CLP';
+  const activeBookings = upcomingBookings.filter(
+    (b) => b.status !== 'CANCELLED' && b.status !== 'NO_SHOW',
+  );
+  const upcomingRevenue = activeBookings.reduce((sum, b) => sum + b.total_price, 0);
+  const currency = activeBookings[0]?.currency ?? catalogPage.data[0]?.currency ?? 'CLP';
 
   return c.json({
     success: true,
@@ -48,7 +52,7 @@ dashboardRoutes.get('/', async (c) => {
       kpis: {
         totalClients: clientsPage.pagination.total_items,
         activeCatalogItems: catalogPage.pagination.total_items,
-        upcomingBookingsCount: upcomingBookings.length,
+        upcomingBookingsCount: activeBookings.length,
         upcomingRevenue,
         currency,
       },

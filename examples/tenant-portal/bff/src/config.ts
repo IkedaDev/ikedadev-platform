@@ -23,6 +23,7 @@ const envSchema = z.object({
   CRM_API_URL: z.string().url().default('http://localhost:8081'),
   EVENTS_API_URL: z.string().url().default('http://localhost:8080'),
   CATALOG_API_URL: z.string().url().default('http://localhost:8083'),
+  BOOKINGS_API_URL: z.string().url().default('http://localhost:8084'),
 });
 
 const parsed = envSchema.safeParse(process.env);

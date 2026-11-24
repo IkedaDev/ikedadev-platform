@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { bookingsClient } from './clients/bookingsClient.js';
 import { catalogClient } from './clients/catalogClient.js';
 import { crmClient } from './clients/crmClient.js';
 import { eventsClient } from './clients/eventsClient.js';
@@ -226,11 +227,15 @@ async function seedBookings(
     const start = new Date(tomorrow);
     start.setUTCHours(spec.hourUtc, 0, 0, 0);
 
-    const totalDurationMinutes = spec.selectedItems.reduce(
-      (sum, item) => sum + (item.item_type === 'SERVICE' ? item.duration_minutes : 0),
-      0,
-    ) || 30;
-    const totalPrice = spec.selectedItems.reduce((sum, item) => sum + item.base_price, 0);
+    const totalDurationMinutes =
+      spec.selectedItems.reduce(
+        (sum, item) =>
+          sum +
+          (item.item_type === 'SERVICE'
+            ? item.duration_minutes + (item.buffer_minutes ?? 0)
+            : 0),
+        0,
+      ) || 30;
     const currency = spec.selectedItems[0]?.currency ?? 'CLP';
     const end = new Date(start.getTime() + totalDurationMinutes * 60 * 1000);
 
@@ -241,19 +246,47 @@ async function seedBookings(
         description: spec.notes,
         starts_at: start.toISOString(),
         ends_at: end.toISOString(),
+        timezone: calendar.timezone || 'UTC',
         status: 'CONFIRMED',
         external_resource_id: spec.client.id,
         metadata: {
-          catalogItemIds: spec.selectedItems.map((i) => i.id),
-          totalPrice,
-          totalDurationMinutes,
-          currency,
-          notes: spec.notes,
+          source: 'seed.ts',
+          client_id: spec.client.id,
         },
       });
-      console.log(
-        `  ✓ Reserva creada: "${event.title}" (${start.toISOString()} -> ${end.toISOString()})`,
-      );
+
+      try {
+        const booking = await bookingsClient.createBooking({
+          client_id: spec.client.id,
+          calendar_id: calendar.id,
+          event_id: event.id,
+          starts_at: start.toISOString(),
+          ends_at: end.toISOString(),
+          timezone: calendar.timezone || 'UTC',
+          status: 'SCHEDULED',
+          currency,
+          notes: spec.notes,
+          metadata: { source: 'seed.ts' },
+          items: spec.selectedItems.map((item) => ({
+            catalog_item_id: item.id,
+            variant_id: null,
+            name_snapshot: item.name,
+            sku_snapshot: item.sku ?? null,
+            quantity: 1,
+            unit_price_snapshot: item.base_price,
+            tax_rate_bps: item.tax_rate_bps,
+            tax_included: item.tax_included,
+            duration_minutes_snapshot: item.item_type === 'SERVICE' ? item.duration_minutes : 0,
+            buffer_minutes_snapshot: item.item_type === 'SERVICE' ? (item.buffer_minutes ?? 0) : 0,
+          })),
+        });
+        console.log(
+          `  ✓ Reserva creada: ${booking.booking_code} ("${event.title}", ${start.toISOString()} -> ${end.toISOString()})`,
+        );
+      } catch (bookingErr) {
+        await eventsClient.deleteEvent(event.id).catch(() => undefined);
+        throw bookingErr;
+      }
     } catch (err) {
       if (err instanceof UpstreamApiError && err.status === 409) {
         console.log(

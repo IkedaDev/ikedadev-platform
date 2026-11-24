@@ -1,6 +1,6 @@
 # Tenant Portal — BFF + Dashboard Web (Modo Producción con Keycloak + Identity API)
 
-Aplicación de referencia aislada dentro de `ikedadev-platform` que demuestra y valida de punta a punta los **4 microservicios en Rust** (`events-api`, `crm-api`, `identity-api` y `catalog-api`) con **autenticación real de producción** mediante **Keycloak (OIDC Authorization Code + PKCE)**, sesiones `HttpOnly` en el **BFF (Hono)** y validación criptográfica **RS256/JWKS** en cada microservicio.
+Aplicación de referencia aislada dentro de `ikedadev-platform` que demuestra y valida de punta a punta los **5 microservicios en Rust** (`events-api`, `crm-api`, `identity-api`, `catalog-api` y `bookings-api`) con **autenticación real de producción** mediante **Keycloak (OIDC Authorization Code + PKCE)**, sesiones `HttpOnly` en el **BFF (Hono)** y validación criptográfica **RS256/JWKS** en cada microservicio.
 
 > **Aislamiento en el Monorepo:** El BFF y el Dashboard viven exclusivamente bajo `examples/tenant-portal/`. No modifican `Cargo.toml` raíz ni el código fuente de los servicios Rust.
 
@@ -16,7 +16,8 @@ Tenant Portal BFF (Hono + Zod :4000)
         ├──► events-api   (:8080)  Valida RS256 JWKS + claim `tenant_id` (RLS)
         ├──► crm-api      (:8081)  Valida RS256 JWKS + claim `tenant_id` (RLS)
         ├──► identity-api (:8082)  Valida RS256 JWKS + gestiona usuarios reales en Keycloak Admin API
-        └──► catalog-api  (:8083)  Valida RS256 JWKS + claim `tenant_id` (RLS)
+        ├──► catalog-api  (:8083)  Valida RS256 JWKS + claim `tenant_id` (RLS)
+        └──► bookings-api (:8084)  Fuente de verdad de reservas (snapshots congelados + máquina de estados + idempotencia)
 ```
 
 ---
@@ -41,9 +42,9 @@ Desde la raíz del repositorio (`ikedadev-platform/`):
 
 | Comando | Qué levanta |
 | :--- | :--- |
-| `docker compose --profile full up -d --build` | **Recomendado (Todo listo):** PostgreSQL 17 (4 DBs + migraciones) + Keycloak 26 (realm `ikeda`) + las **4 APIs Rust** con JWKS y Keycloak Admin activos |
+| `docker compose --profile full up -d --build` | **Recomendado (Todo listo):** PostgreSQL 17 (5 DBs + migraciones) + Keycloak 26 (realm `ikeda`) + las **5 APIs Rust** con JWKS y Keycloak Admin activos |
 | `docker compose --profile keycloak up -d` | Solo infraestructura: **PostgreSQL 17** + **Keycloak 26** (`:8180`) para correr las APIs con `cargo run` |
-| `docker compose --profile apis up -d --build` | PostgreSQL 17 + las 4 APIs Rust |
+| `docker compose --profile apis up -d --build` | PostgreSQL 17 + las 5 APIs Rust |
 | `docker compose up -d` | Solo PostgreSQL 17 |
 
 > **Importante si ya habías levantado Postgres anteriormente:** `scripts/init-databases.sh` se ejecuta al crear el volumen por primera vez. Si necesitas inicializar limpio:
@@ -54,7 +55,7 @@ Desde la raíz del repositorio (`ikedadev-platform/`):
 
 ---
 
-## Paso 1: Levantar la plataforma (Postgres + Keycloak + 4 APIs Rust)
+## Paso 1: Levantar la plataforma (Postgres + Keycloak + 5 APIs Rust)
 
 ```bash
 docker compose --profile full up -d --build
@@ -62,7 +63,7 @@ docker compose --profile full up -d --build
 
 Verifica que respondan:
 - Keycloak OIDC discovery: `http://localhost:8180/realms/ikeda/.well-known/openid-configuration`
-- Microservicios Rust: `http://localhost:8080/health`, `8081/health`, `8082/health`, `8083/health`
+- Microservicios Rust: `http://localhost:8080/health`, `8081/health`, `8082/health`, `8083/health`, `8084/health`
 
 *(Si prefieres correr los 4 servicios con `cargo run -p ...` fuera de Docker, levanta primero `docker compose --profile keycloak up -d` y pasa `JWKS_URI=http://localhost:8180/realms/ikeda/protocol/openid-connect/certs`, `JWT_ISSUER=http://localhost:8180/realms/ikeda`, `KEYCLOAK_BASE_URL=http://localhost:8180` y `KEYCLOAK_CLIENT_SECRET=ikeda-identity-admin-secret-2026`.)*
 
@@ -114,7 +115,7 @@ Abre **http://localhost:5173** en tu navegador.
 ## Flujo E2E de Producción para Probar
 
 1. **Login SSO con Keycloak:** Al abrir `http://localhost:5173` verás la pantalla de inicio de sesión. Haz clic en **Iniciar sesión con Keycloak (SSO)** e ingresa con `admin@demo.ikedadev.com` / `Admin123!`.
-2. **Validación JWT real en los 4 microservicios:** Una vez autenticado, el BFF reenvía únicamente `Authorization: Bearer <access_token>` (sin `X-Api-Key`), por lo que `events-api`, `crm-api`, `catalog-api` e `identity-api` validan tu token RS256 contra el JWKS de Keycloak y aplican RLS con el `tenant_id` del JWT.
+2. **Validación JWT real en los 5 microservicios:** Una vez autenticado, el BFF reenvía únicamente `Authorization: Bearer <access_token>` (sin `X-Api-Key`), por lo que `events-api`, `crm-api`, `catalog-api`, `identity-api` y `bookings-api` validan tu token RS256 contra el JWKS de Keycloak y aplican RLS con el `tenant_id` del JWT.
 3. **Provisionar un usuario real en Keycloak desde la UI:** Ve a **Identidad y Acceso -> Nuevo Usuario**, crea un usuario con password temporal y rol `tenant:admin` o `tenant:member`. `identity-api` lo creará realmente en Keycloak con el atributo `tenant_id` de tu tenant.
 4. **Probar el nuevo usuario:** Haz clic en **Cerrar sesión** en el sidebar e inicia sesión en Keycloak con el usuario que acabas de crear.
-5. **Probar el ciclo comercial completo:** Crea cliente -> crea servicio -> consulta disponibilidad -> agenda reserva -> intenta agendar en el mismo horario para ver la alerta `409 Conflict`.
+5. **Probar el ciclo comercial completo:** Crea cliente -> crea servicio -> consulta disponibilidad -> agenda reserva (el BFF coordina `catalog-api` batch -> `events-api` -> `bookings-api` con compensación automática) -> intenta agendar en el mismo horario para ver la alerta `409 Conflict` -> cambia estado a **Completar**, **No-Show** o **Cancelar** (liberando el bloque horario automáticamente en `events-api`).

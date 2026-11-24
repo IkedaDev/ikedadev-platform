@@ -3,6 +3,7 @@ import type {
   AuthMeResponse,
   AvailabilityResult,
   BffHealth,
+  BookingStatus,
   Calendar,
   CatalogItem,
   Category,
@@ -214,8 +215,13 @@ export const bffClient = {
     return res.data;
   },
 
-  // Bookings (BFF Orchestrated)
-  listBookings: async (params: { start: string; end: string; calendarId?: string }) => {
+  // Bookings (BFF Orchestrated: catalog-api + events-api + bookings-api)
+  listBookings: async (params: {
+    start?: string;
+    end?: string;
+    calendarId?: string;
+    status?: BookingStatus;
+  }) => {
     const res = await request<{ success: boolean; data: EnrichedBooking[] }>(
       'GET',
       '/api/bookings',
@@ -234,6 +240,21 @@ export const bffClient = {
     const res = await request<{ success: boolean; data: EnrichedBooking }>(
       'POST',
       '/api/bookings',
+      { body: payload },
+    );
+    return res.data;
+  },
+
+  transitionBookingStatus: async (
+    id: string,
+    payload: {
+      status: BookingStatus;
+      cancellationReason?: string;
+    },
+  ) => {
+    const res = await request<{ success: boolean; data: EnrichedBooking }>(
+      'PATCH',
+      `/api/bookings/${id}/status`,
       { body: payload },
     );
     return res.data;

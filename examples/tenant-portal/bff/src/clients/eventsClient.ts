@@ -21,6 +21,10 @@ export const eventsClient = {
     return http.requestData<Calendar[]>('GET', '/v1/calendars', { ctx });
   },
 
+  getCalendar(id: string, ctx?: RequestContext): Promise<Calendar> {
+    return http.requestData<Calendar>('GET', `/v1/calendars/${id}`, { ctx });
+  },
+
   createCalendar(cmd: CreateCalendarCommand, ctx?: RequestContext): Promise<Calendar> {
     return http.requestData<Calendar>('POST', '/v1/calendars', { body: cmd, ctx });
   },

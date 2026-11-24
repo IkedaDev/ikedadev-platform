@@ -1,15 +1,45 @@
-import { AlertTriangle, CalendarPlus, CheckCircle2, Clock, RefreshCw, Trash2 } from 'lucide-react';
+import {
+  AlertTriangle,
+  CalendarPlus,
+  Check,
+  CheckCircle2,
+  Clock,
+  RefreshCw,
+  Trash2,
+  UserX,
+  XCircle,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { BffApiError, bffClient } from '../api/bffClient';
 import { Modal } from '../components/Modal';
 import { StatusBadge, formatDateTime, formatMoney } from '../components/StatusBadge';
 import type {
   AvailabilityResult,
+  BookingStatus,
   Calendar,
   CatalogItem,
   Client,
   EnrichedBooking,
 } from '../types/api';
+
+function bookingStatusTone(status: BookingStatus): 'green' | 'amber' | 'red' | 'blue' | 'gray' {
+  switch (status) {
+    case 'COMPLETED':
+      return 'green';
+    case 'SCHEDULED':
+    case 'IN_PROGRESS':
+      return 'blue';
+    case 'PENDING':
+      return 'amber';
+    case 'CANCELLED':
+    case 'NO_SHOW':
+      return 'red';
+  }
+}
+
+function isTerminalStatus(status: BookingStatus): boolean {
+  return status === 'COMPLETED' || status === 'CANCELLED' || status === 'NO_SHOW';
+}
 
 function toDateInputValue(date: Date): string {
   const yyyy = date.getFullYear();
@@ -175,7 +205,7 @@ export function BookingsView() {
       });
 
       setSuccessMsg(
-        `Reserva creada: ${created.title} (${formatMoney(created.total_price, created.currency)})`,
+        `Reserva creada: ${created.booking_code} (${formatMoney(created.total_price, created.currency)})`,
       );
       setNotes('');
       await Promise.all([loadBaseData(), loadAvailability()]);
@@ -190,8 +220,38 @@ export function BookingsView() {
     }
   };
 
+  const handleTransitionStatus = async (booking: EnrichedBooking, targetStatus: BookingStatus) => {
+    setError(null);
+    setSuccessMsg(null);
+    let cancellationReason: string | undefined;
+
+    if (targetStatus === 'CANCELLED') {
+      const promptRes = window.prompt(
+        `Motivo de cancelación para ${booking.booking_code} (el bloque horario se liberará automáticamente):`,
+        'Cancelado desde portal administrativo',
+      );
+      if (promptRes === null) return;
+      cancellationReason = promptRes.trim() || undefined;
+    }
+
+    try {
+      const updated = await bffClient.transitionBookingStatus(booking.id, {
+        status: targetStatus,
+        cancellationReason,
+      });
+      setSuccessMsg(
+        `Reserva ${updated.booking_code} actualizada a ${updated.status}${
+          targetStatus === 'CANCELLED' ? ' (horario liberado en events-api)' : ''
+        }.`,
+      );
+      await Promise.all([loadBaseData(), loadAvailability()]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error actualizando estado de la reserva');
+    }
+  };
+
   const handleDeleteBooking = async (booking: EnrichedBooking) => {
-    if (!confirm(`¿Cancelar/eliminar la reserva "${booking.title}"?`)) return;
+    if (!confirm(`¿Eliminar (soft delete) la reserva ${booking.booking_code}?`)) return;
     try {
       await bffClient.deleteBooking(booking.id);
       await Promise.all([loadBaseData(), loadAvailability()]);
@@ -506,9 +566,9 @@ export function BookingsView() {
       {/* Enriched bookings table */}
       <div className="card">
         <div className="section-header">
-          <h2 className="section-title">Reservas Enriquecidas ({bookings.length})</h2>
+          <h2 className="section-title">Reservas ({bookings.length})</h2>
           <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            Resueltas en lote por GET /api/bookings
+            Fuente de verdad: bookings-api (snapshots congelados + máquina de estados)
           </span>
         </div>
 
@@ -521,25 +581,34 @@ export function BookingsView() {
             <table>
               <thead>
                 <tr>
+                  <th>Código / Estado</th>
                   <th>Horario</th>
                   <th>Cliente</th>
-                  <th>Servicios / Ítems</th>
-                  <th>Total</th>
-                  <th>Notas</th>
-                  <th style={{ width: 70 }}>Acción</th>
+                  <th>Ítems Congelados</th>
+                  <th>Totales</th>
+                  <th>Notas / Motivo</th>
+                  <th style={{ width: 220 }}>Acciones</th>
                 </tr>
               </thead>
               <tbody>
                 {bookings.map((b) => (
                   <tr key={b.id}>
                     <td>
+                      <div style={{ marginBottom: 4 }}>
+                        <code style={{ fontSize: 12, fontWeight: 700 }}>{b.booking_code}</code>
+                      </div>
+                      <StatusBadge label={b.status} tone={bookingStatusTone(b.status)} />
+                    </td>
+                    <td>
                       <div style={{ fontWeight: 600 }}>{formatDateTime(b.starts_at)}</div>
                       <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                        hasta {formatTimeOnly(b.ends_at)}
+                        hasta {formatTimeOnly(b.ends_at)} ({b.total_duration_minutes}m)
                       </div>
                     </td>
                     <td>
-                      <div style={{ fontWeight: 500 }}>{b.client_name ?? 'Sin cliente'}</div>
+                      <div style={{ fontWeight: 500 }}>
+                        {b.client?.full_name ?? 'Sin cliente'}
+                      </div>
                       {b.calendar_name && (
                         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                           {b.calendar_name}
@@ -547,27 +616,73 @@ export function BookingsView() {
                       )}
                     </td>
                     <td>
-                      <div className="btn-row">
-                        {b.items.length > 0 ? (
-                          b.items.map((item) => (
-                            <StatusBadge key={item.id} label={item.name} tone="blue" />
-                          ))
-                        ) : (
-                          <span>{b.title}</span>
-                        )}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {b.items.map((item) => (
+                          <div key={item.id} style={{ fontSize: 12 }}>
+                            <StatusBadge
+                              label={`${item.name_snapshot} ×${item.quantity} (${formatMoney(item.line_total, b.currency)})`}
+                              tone="gray"
+                            />
+                          </div>
+                        ))}
                       </div>
                     </td>
-                    <td style={{ fontWeight: 600 }}>{formatMoney(b.total_price, b.currency)}</td>
-                    <td style={{ color: 'var(--text-muted)', maxWidth: 220 }}>{b.notes ?? '—'}</td>
                     <td>
-                      <button
-                        type="button"
-                        className="btn btn-danger btn-sm"
-                        onClick={() => handleDeleteBooking(b)}
-                        title="Eliminar reserva"
-                      >
-                        <Trash2 size={13} />
-                      </button>
+                      <div style={{ fontWeight: 700 }}>
+                        {formatMoney(b.total_price, b.currency)}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                        Neto: {formatMoney(b.subtotal, b.currency)} · Imp:{' '}
+                        {formatMoney(b.tax_total, b.currency)}
+                      </div>
+                    </td>
+                    <td style={{ color: 'var(--text-muted)', maxWidth: 200, fontSize: 12 }}>
+                      {b.cancellation_reason
+                        ? `Cancelación: ${b.cancellation_reason}`
+                        : (b.notes ?? '—')}
+                    </td>
+                    <td>
+                      <div className="btn-row">
+                        {!isTerminalStatus(b.status) && (
+                          <>
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => handleTransitionStatus(b, 'COMPLETED')}
+                              title="Marcar como completada"
+                            >
+                              <Check size={13} />
+                              Completar
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => handleTransitionStatus(b, 'NO_SHOW')}
+                              title="Marcar No-Show"
+                            >
+                              <UserX size={13} />
+                              No-Show
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-danger btn-sm"
+                              onClick={() => handleTransitionStatus(b, 'CANCELLED')}
+                              title="Cancelar reserva y liberar horario"
+                            >
+                              <XCircle size={13} />
+                              Cancelar
+                            </button>
+                          </>
+                        )}
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => handleDeleteBooking(b)}
+                          title="Eliminar (soft delete)"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
