@@ -34,7 +34,7 @@ app.use(
       if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
         return origin;
       }
-      return allowedOrigins[0] ?? '';
+      return '';
     },
     allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
@@ -112,7 +112,7 @@ app.onError((err, c) => {
     {
       success: false,
       code: 'INTERNAL_SERVER_ERROR',
-      message: err instanceof Error ? err.message : 'Error interno del BFF',
+      message: 'Error interno del BFF',
     },
     500,
   );

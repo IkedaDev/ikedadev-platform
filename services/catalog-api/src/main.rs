@@ -27,7 +27,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!(%addr, "Initializing IkedaDev Catalog API...");
 
     let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgres://postgres:postgres@localhost:5432/catalog_db?sslmode=disable".to_string()
+        "postgres://postgres:postgres_password@localhost:5432/catalog_db?sslmode=disable"
+            .to_string()
     });
 
     let db_config = infrastructure::DatabaseConfig {
@@ -70,8 +71,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut state = presentation::AppState::new(category_repo, item_repo, api_key_validator);
 
-    // Optional Keycloak / OIDC JWKS JWT validation (accepts JWKS_URL or JWKS_URI)
-    let jwks_url = std::env::var("JWKS_URL").or_else(|_| std::env::var("JWKS_URI"));
+    // Optional Keycloak / OIDC JWKS JWT validation (accepts JWKS_URI or JWKS_URL)
+    let jwks_url = std::env::var("JWKS_URI").or_else(|_| std::env::var("JWKS_URL"));
     if let (Ok(jwks_uri), Ok(jwt_issuer)) = (jwks_url, std::env::var("JWT_ISSUER")) {
         if !jwks_uri.trim().is_empty() && !jwt_issuer.trim().is_empty() {
             let mut jwks_config = ikeda_core::tenant::JwksConfig::new(jwks_uri, jwt_issuer);

@@ -8,6 +8,7 @@ license.workspace = true
 [features]
 default = []
 dev-auth = []
+sqlx = ["dep:sqlx"]
 
 [dependencies]
 axum = { workspace = true }
@@ -24,6 +25,7 @@ async-trait = { workspace = true }
 jsonwebtoken = { workspace = true }
 reqwest = { workspace = true }
 tokio = { workspace = true }
+sqlx = { workspace = true, optional = true }
 
 [dev-dependencies]
 tower = { workspace = true }

@@ -1,7 +1,11 @@
 target/
+examples/
+docs/
+node_modules/
 .git/
 .env*
 !.env.example
 *.md
+*.tsbuildinfo
 .vscode/
 .idea/

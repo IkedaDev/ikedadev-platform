@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!(%addr, "Initializing IkedaDev CRM API...");
 
     let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgres://postgres:postgres@localhost:5432/crm_db?sslmode=disable".to_string()
+        "postgres://postgres:postgres_password@localhost:5432/crm_db?sslmode=disable".to_string()
     });
 
     let db_config = infrastructure::DatabaseConfig {
@@ -68,8 +68,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
     let mut state = presentation::AppState::new(client_repo, api_key_validator);
 
-    if let (Ok(jwks_uri), Ok(jwt_issuer)) = (std::env::var("JWKS_URI"), std::env::var("JWT_ISSUER"))
-    {
+    let jwks_uri_env = std::env::var("JWKS_URI").or_else(|_| std::env::var("JWKS_URL"));
+    if let (Ok(jwks_uri), Ok(jwt_issuer)) = (jwks_uri_env, std::env::var("JWT_ISSUER")) {
         if !jwks_uri.trim().is_empty() && !jwt_issuer.trim().is_empty() {
             let mut jwks_config = ikeda_core::tenant::JwksConfig::new(jwks_uri, jwt_issuer);
             if let Ok(aud) = std::env::var("JWT_AUDIENCE") {

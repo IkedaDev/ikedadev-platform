@@ -10,7 +10,7 @@ default = []
 dev-auth = ["ikeda-core/dev-auth"]
 
 [dependencies]
-ikeda-core = { workspace = true }
+ikeda-core = { workspace = true, features = ["sqlx"] }
 tokio = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }

@@ -13,6 +13,7 @@ import {
 import { config } from '../config.js';
 
 const OIDC_TX_COOKIE = 'ikeda_oidc_tx';
+const IS_HTTPS = config.BFF_PUBLIC_URL.startsWith('https://');
 
 interface OidcTx {
   state: string;
@@ -34,6 +35,7 @@ authRoutes.get('/login', (c) => {
 
   setCookie(c, OIDC_TX_COOKIE, txPayload, {
     httpOnly: true,
+    secure: IS_HTTPS,
     sameSite: 'Lax',
     path: '/auth',
     maxAge: 300, // 5 minutes
@@ -99,6 +101,7 @@ authRoutes.get('/callback', async (c) => {
 
     setCookie(c, config.SESSION_COOKIE_NAME, session.id, {
       httpOnly: true,
+      secure: IS_HTTPS,
       sameSite: 'Lax',
       path: '/',
       maxAge: 60 * 60 * 8, // 8 hours
@@ -108,10 +111,7 @@ authRoutes.get('/callback', async (c) => {
   } catch (err) {
     console.error('[OIDC Callback Error]', err);
     const redirectErr = new URL(config.WEB_APP_URL);
-    redirectErr.searchParams.set(
-      'auth_error',
-      err instanceof Error ? err.message : 'Error intercambiando token con Keycloak',
-    );
+    redirectErr.searchParams.set('auth_error', 'Error autenticando con Keycloak');
     return c.redirect(redirectErr.toString());
   }
 });

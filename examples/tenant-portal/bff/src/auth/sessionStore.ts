@@ -14,7 +14,8 @@ export interface BffSession {
   accessToken: string;
   refreshToken?: string;
   idToken?: string;
-  expiresAt: number; // Unix timestamp in ms
+  expiresAt: number; // Access token expiration (Unix timestamp in ms)
+  sessionExpiresAt: number; // Absolute BFF session expiration (Unix timestamp in ms)
   user: SessionUser;
 }
 
@@ -27,8 +28,28 @@ interface KeycloakTokenResponse {
   token_type: string;
 }
 
+const SESSION_MAX_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours (aligned with cookie maxAge)
+const SESSION_CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // Sweep every 5 minutes
+
 // Note: In a multi-replica production deployment, back this store with Redis.
 const sessions = new Map<string, BffSession>();
+
+export function pruneExpiredSessions(now = Date.now()): number {
+  let removed = 0;
+  for (const [id, session] of sessions.entries()) {
+    const expiredWithoutRefresh = !session.refreshToken && now >= session.expiresAt;
+    if (now >= session.sessionExpiresAt || expiredWithoutRefresh) {
+      sessions.delete(id);
+      removed += 1;
+    }
+  }
+  return removed;
+}
+
+const cleanupTimer = setInterval(() => {
+  pruneExpiredSessions();
+}, SESSION_CLEANUP_INTERVAL_MS);
+cleanupTimer.unref();
 
 export function generateRandomUrlSafe(bytes = 32): string {
   return crypto.randomBytes(bytes).toString('base64url');
@@ -163,12 +184,18 @@ export async function refreshSessionTokens(session: BffSession): Promise<BffSess
     }
 
     const tokens = (await res.json()) as KeycloakTokenResponse;
+    const now = Date.now();
+    const refreshTtlMs =
+      typeof tokens.refresh_expires_in === 'number' && tokens.refresh_expires_in > 0
+        ? tokens.refresh_expires_in * 1000
+        : SESSION_MAX_TTL_MS;
     const updated: BffSession = {
       id: session.id,
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token ?? session.refreshToken,
       idToken: tokens.id_token ?? session.idToken,
-      expiresAt: Date.now() + tokens.expires_in * 1000,
+      expiresAt: now + tokens.expires_in * 1000,
+      sessionExpiresAt: Math.min(session.sessionExpiresAt, now + refreshTtlMs),
       user: extractSessionUser(tokens.access_token, tokens.id_token ?? session.idToken),
     };
     sessions.set(session.id, updated);
@@ -181,12 +208,18 @@ export async function refreshSessionTokens(session: BffSession): Promise<BffSess
 
 export function createSession(tokens: KeycloakTokenResponse): BffSession {
   const id = generateRandomUrlSafe(32);
+  const now = Date.now();
+  const refreshTtlMs =
+    typeof tokens.refresh_expires_in === 'number' && tokens.refresh_expires_in > 0
+      ? tokens.refresh_expires_in * 1000
+      : SESSION_MAX_TTL_MS;
   const session: BffSession = {
     id,
     accessToken: tokens.access_token,
     refreshToken: tokens.refresh_token,
     idToken: tokens.id_token,
-    expiresAt: Date.now() + tokens.expires_in * 1000,
+    expiresAt: now + tokens.expires_in * 1000,
+    sessionExpiresAt: now + Math.min(SESSION_MAX_TTL_MS, refreshTtlMs),
     user: extractSessionUser(tokens.access_token, tokens.id_token),
   };
   sessions.set(id, session);
@@ -198,8 +231,14 @@ export async function getValidSession(sessionId: string | undefined): Promise<Bf
   const session = sessions.get(sessionId);
   if (!session) return null;
 
+  const now = Date.now();
+  if (now >= session.sessionExpiresAt) {
+    sessions.delete(sessionId);
+    return null;
+  }
+
   // Refresh proactively if access token expires in less than 30 seconds
-  if (Date.now() >= session.expiresAt - 30_000) {
+  if (now >= session.expiresAt - 30_000) {
     return refreshSessionTokens(session);
   }
 
