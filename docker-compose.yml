@@ -2,7 +2,12 @@ name: ikedadev-platform
 
 services:
   # ============================================================================
-  # 1. PostgreSQL Database with Auto-Migration & Row-Level Security (RLS)
+  # 1. PostgreSQL Database (Multi-DB Auto-Init: events_db, crm_db, identity_db, catalog_db)
+  #    Always starts as base infrastructure:
+  #      docker compose up -d                    -> postgres only
+  #      docker compose --profile keycloak up -d -> postgres + keycloak
+  #      docker compose --profile apis up -d     -> postgres + 4 Rust APIs
+  #      docker compose --profile full up -d     -> postgres + keycloak + 4 Rust APIs
   # ============================================================================
   postgres:
     image: postgres:17-alpine
@@ -12,24 +17,30 @@ services:
       POSTGRES_DB: events_db
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres_password
+      LOCAL_DEV_API_KEY: "${LOCAL_DEV_API_KEY:-ik_live_dev_tenant_portal_local_2026}"
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./services/events-api/migrations/20261123000001_create_events_schema.sql:/docker-entrypoint-initdb.d/01_create_events_schema.sql:ro
-      - ./services/events-api/migrations/20261123000002_security_and_operations.sql:/docker-entrypoint-initdb.d/02_security_and_operations.sql:ro
+      - ./scripts/init-databases.sh:/docker-entrypoint-initdb.d/00_init_databases.sh:ro
+      - ./services/events-api/migrations:/migrations/events:ro
+      - ./services/crm-api/migrations:/migrations/crm:ro
+      - ./services/identity-api/migrations:/migrations/identity:ro
+      - ./services/catalog-api/migrations:/migrations/catalog:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d events_db"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d identity_db"]
       interval: 3s
       timeout: 3s
-      retries: 10
-      start_period: 3s
+      retries: 15
+      start_period: 5s
 
   # ============================================================================
   # 2. Events API (Rust Axum Microservice - Port 8080)
+  #    Profiles: events | apis | full
   # ============================================================================
   events-api:
     container_name: ikedadev-events-api
+    profiles: ["events", "apis", "full"]
     build:
       context: .
       dockerfile: services/events-api/Dockerfile
@@ -41,21 +52,24 @@ services:
       PORT: "8080"
       HOST: "0.0.0.0"
       DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/events_db?sslmode=disable"
-      # Optional: point to identity_db for centralized API key validation (falls back to DATABASE_URL)
-      # IDENTITY_DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/identity_db?sslmode=disable"
+      IDENTITY_DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/identity_db?sslmode=disable"
       DATABASE_MAX_CONNECTIONS: "20"
       DATABASE_MIN_CONNECTIONS: "3"
       RUST_LOG: "info,events_api=debug,tower_http=info"
       QSTASH_TOKEN: "mock-dev-token"
+      # Optional Keycloak JWT validation (set in .env if validating Bearer JWTs)
+      JWKS_URI: "${JWKS_URI:-}"
+      JWT_ISSUER: "${JWT_ISSUER:-}"
     ports:
       - "8080:8080"
 
   # ============================================================================
-  # 3. CRM API (Optional Profile: full - Port 8081)
+  # 3. CRM API (Rust Axum Microservice - Port 8081)
+  #    Profiles: crm | apis | full
   # ============================================================================
   crm-api:
     container_name: ikedadev-crm-api
-    profiles: ["full"]
+    profiles: ["crm", "apis", "full"]
     build:
       context: .
       dockerfile: services/crm-api/Dockerfile
@@ -69,15 +83,18 @@ services:
       DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/crm_db?sslmode=disable"
       IDENTITY_DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/identity_db?sslmode=disable"
       RUST_LOG: "info,crm_api=debug,tower_http=info"
+      JWKS_URI: "${JWKS_URI:-}"
+      JWT_ISSUER: "${JWT_ISSUER:-}"
     ports:
       - "8081:8081"
 
   # ============================================================================
-  # 4. Identity API (Optional Profile: full - Port 8082)
+  # 4. Identity API (Rust Axum Microservice - Port 8082)
+  #    Profiles: identity | apis | full
   # ============================================================================
   identity-api:
     container_name: ikedadev-identity-api
-    profiles: ["full"]
+    profiles: ["identity", "apis", "full"]
     build:
       context: .
       dockerfile: services/identity-api/Dockerfile
@@ -90,19 +107,22 @@ services:
       HOST: "0.0.0.0"
       DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/identity_db?sslmode=disable"
       KEYCLOAK_BASE_URL: "http://keycloak:8080"
-      KEYCLOAK_REALM: "ikeda"
-      KEYCLOAK_CLIENT_ID: "identity-api-admin"
-      KEYCLOAK_CLIENT_SECRET: ""
+      KEYCLOAK_REALM: "${KEYCLOAK_REALM:-ikeda}"
+      KEYCLOAK_CLIENT_ID: "${KEYCLOAK_CLIENT_ID:-identity-api-admin}"
+      KEYCLOAK_CLIENT_SECRET: "${KEYCLOAK_CLIENT_SECRET:-}"
+      JWKS_URI: "${JWKS_URI:-}"
+      JWT_ISSUER: "${JWT_ISSUER:-}"
       RUST_LOG: "info,identity_api=debug,tower_http=info"
     ports:
       - "8082:8082"
 
   # ============================================================================
-  # 5. Catalog API (Optional Profile: full - Port 8083)
+  # 5. Catalog API (Rust Axum Microservice - Port 8083)
+  #    Profiles: catalog | apis | full
   # ============================================================================
   catalog-api:
     container_name: ikedadev-catalog-api
-    profiles: ["full"]
+    profiles: ["catalog", "apis", "full"]
     build:
       context: .
       dockerfile: services/catalog-api/Dockerfile
@@ -115,12 +135,14 @@ services:
       HOST: "0.0.0.0"
       DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/catalog_db?sslmode=disable"
       IDENTITY_DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/identity_db?sslmode=disable"
+      JWKS_URI: "${JWKS_URI:-}"
+      JWT_ISSUER: "${JWT_ISSUER:-}"
       RUST_LOG: "info,catalog_api=debug,tower_http=info"
     ports:
       - "8083:8083"
 
   # ============================================================================
-  # 6. Keycloak Dev Server (Optional Profile: keycloak / full - Port 8180)
+  # 6. Keycloak Dev Server (Profiles: keycloak | full - Port 8180)
   #    Start with: docker compose --profile keycloak up -d
   # ============================================================================
   keycloak:

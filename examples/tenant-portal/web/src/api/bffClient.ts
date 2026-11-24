@@ -1,0 +1,281 @@
+import type {
+  ApiKeySummary,
+  AvailabilityResult,
+  BffHealth,
+  Calendar,
+  CatalogItem,
+  Category,
+  Client,
+  CreatedApiKey,
+  Criteria,
+  DashboardSummary,
+  EnrichedBooking,
+  PaginatedResponse,
+  TenantUser,
+} from '../types/api';
+
+const BASE_URL = (import.meta.env.VITE_BFF_URL || 'http://localhost:4000').replace(/\/+$/, '');
+
+export class BffApiError extends Error {
+  public readonly status: number;
+  public readonly code?: string;
+  public readonly details?: unknown;
+
+  constructor(status: number, message: string, code?: string, details?: unknown) {
+    super(message);
+    this.name = 'BffApiError';
+    this.status = status;
+    this.code = code;
+    this.details = details;
+  }
+}
+
+async function request<T>(
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  path: string,
+  options?: {
+    body?: unknown;
+    query?: Record<string, string | number | undefined>;
+  },
+): Promise<T> {
+  const url = new URL(`${BASE_URL}${path}`);
+  if (options?.query) {
+    for (const [k, v] of Object.entries(options.query)) {
+      if (v !== undefined && v !== '') {
+        url.searchParams.set(k, String(v));
+      }
+    }
+  }
+
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+  };
+  if (options?.body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(url.toString(), {
+      method,
+      headers,
+      body: options?.body !== undefined ? JSON.stringify(options.body) : undefined,
+    });
+  } catch (err) {
+    throw new BffApiError(
+      0,
+      `No se pudo conectar con el BFF en ${BASE_URL}. Verifica que esté corriendo.`,
+      'NETWORK_ERROR',
+      err,
+    );
+  }
+
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : null;
+
+  if (!res.ok) {
+    throw new BffApiError(
+      res.status,
+      data?.message || `Error HTTP ${res.status}`,
+      data?.code,
+      data?.details ?? data?.errors,
+    );
+  }
+
+  return data as T;
+}
+
+export const bffClient = {
+  baseUrl: BASE_URL,
+
+  health: () => request<BffHealth>('GET', '/health'),
+
+  // Dashboard
+  getDashboard: async () => {
+    const res = await request<{ success: boolean; data: DashboardSummary }>('GET', '/api/dashboard');
+    return res.data;
+  },
+
+  // CRM Clients
+  searchClients: (criteria: Criteria) =>
+    request<PaginatedResponse<Client>>('POST', '/api/clients/search', { body: criteria }),
+
+  createClient: async (payload: {
+    full_name: string;
+    email?: string | null;
+    phone?: string | null;
+    tax_id?: string | null;
+    address?: string | null;
+    notes?: string | null;
+    metadata?: Record<string, unknown>;
+  }) => {
+    const res = await request<{ success: boolean; data: Client }>('POST', '/api/clients', {
+      body: payload,
+    });
+    return res.data;
+  },
+
+  updateClient: async (
+    id: string,
+    payload: Partial<{
+      full_name: string;
+      email: string | null;
+      phone: string | null;
+      tax_id: string | null;
+      address: string | null;
+      notes: string | null;
+      is_active: boolean;
+      metadata: Record<string, unknown>;
+    }>,
+  ) => {
+    const res = await request<{ success: boolean; data: Client }>('PATCH', `/api/clients/${id}`, {
+      body: payload,
+    });
+    return res.data;
+  },
+
+  deleteClient: (id: string) => request<{ success: boolean }>('DELETE', `/api/clients/${id}`),
+
+  // Catalog Categories & Items
+  listCategories: async () => {
+    const res = await request<{ success: boolean; data: Category[] }>('GET', '/api/categories');
+    return res.data;
+  },
+
+  createCategory: async (payload: {
+    name: string;
+    slug: string;
+    description?: string | null;
+    display_order?: number;
+  }) => {
+    const res = await request<{ success: boolean; data: Category }>('POST', '/api/categories', {
+      body: payload,
+    });
+    return res.data;
+  },
+
+  deleteCategory: (id: string) => request<{ success: boolean }>('DELETE', `/api/categories/${id}`),
+
+  searchItems: (criteria: Criteria) =>
+    request<PaginatedResponse<CatalogItem>>('POST', '/api/items/search', { body: criteria }),
+
+  createItem: async (payload: Record<string, unknown>) => {
+    const res = await request<{ success: boolean; data: CatalogItem }>('POST', '/api/items', {
+      body: payload,
+    });
+    return res.data;
+  },
+
+  updateItem: async (id: string, payload: Record<string, unknown>) => {
+    const res = await request<{ success: boolean; data: CatalogItem }>(
+      'PATCH',
+      `/api/items/${id}`,
+      { body: payload },
+    );
+    return res.data;
+  },
+
+  deleteItem: (id: string) => request<{ success: boolean }>('DELETE', `/api/items/${id}`),
+
+  // Calendars & Availability
+  listCalendars: async () => {
+    const res = await request<{ success: boolean; data: Calendar[] }>('GET', '/api/calendars');
+    return res.data;
+  },
+
+  createCalendar: async (payload: {
+    name: string;
+    timezone: string;
+    allow_overlaps: boolean;
+  }) => {
+    const res = await request<{ success: boolean; data: Calendar }>('POST', '/api/calendars', {
+      body: payload,
+    });
+    return res.data;
+  },
+
+  getAvailability: async (
+    calendarId: string,
+    params: { starts_at: string; ends_at: string; slot_duration_minutes?: number },
+  ) => {
+    const res = await request<{ success: boolean; data: AvailabilityResult }>(
+      'GET',
+      `/api/calendars/${calendarId}/availability`,
+      { query: params },
+    );
+    return res.data;
+  },
+
+  // Bookings (BFF Orchestrated)
+  listBookings: async (params: { start: string; end: string; calendarId?: string }) => {
+    const res = await request<{ success: boolean; data: EnrichedBooking[] }>(
+      'GET',
+      '/api/bookings',
+      { query: params },
+    );
+    return res.data;
+  },
+
+  createBooking: async (payload: {
+    clientId: string;
+    calendarId: string;
+    catalogItemIds: string[];
+    startsAt: string;
+    notes?: string;
+  }) => {
+    const res = await request<{ success: boolean; data: EnrichedBooking }>(
+      'POST',
+      '/api/bookings',
+      { body: payload },
+    );
+    return res.data;
+  },
+
+  deleteBooking: (id: string) => request<{ success: boolean }>('DELETE', `/api/bookings/${id}`),
+
+  // Identity
+  listUsers: async () => {
+    const res = await request<{ success: boolean; data: TenantUser[] }>(
+      'GET',
+      '/api/identity/users',
+    );
+    return res.data;
+  },
+
+  createUser: async (payload: {
+    email: string;
+    full_name: string;
+    temporary_password?: string;
+    roles: string[];
+  }) => {
+    const res = await request<{ success: boolean; data: TenantUser }>(
+      'POST',
+      '/api/identity/users',
+      { body: payload },
+    );
+    return res.data;
+  },
+
+  deleteUser: (id: string) =>
+    request<{ success: boolean }>('DELETE', `/api/identity/users/${id}`),
+
+  listApiKeys: async () => {
+    const res = await request<{ success: boolean; data: ApiKeySummary[] }>(
+      'GET',
+      '/api/identity/api-keys',
+    );
+    return res.data;
+  },
+
+  createApiKey: async (payload: { name: string; scopes: string[] }) => {
+    const res = await request<{ success: boolean; data: CreatedApiKey }>(
+      'POST',
+      '/api/identity/api-keys',
+      { body: payload },
+    );
+    return res.data;
+  },
+
+  revokeApiKey: (id: string) =>
+    request<{ success: boolean }>('DELETE', `/api/identity/api-keys/${id}`),
+};
