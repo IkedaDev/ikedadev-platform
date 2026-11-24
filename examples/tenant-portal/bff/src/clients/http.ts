@@ -1,5 +1,6 @@
 import { config } from '../config.js';
 import type { ApiResponse } from '../types/platform.js';
+import { getGcpIdentityToken } from './gcpAuth.js';
 
 export interface RequestContext {
   authorization?: string;
@@ -74,6 +75,13 @@ export class ServiceHttpClient {
       headers['X-Api-Key'] = this.apiKey;
     }
 
+    // Optional GCP Cloud Run private service-to-service IAM authentication.
+    // Sent in X-Serverless-Authorization so Authorization / X-Api-Key stay intact for ikeda-core.
+    if (config.GCP_IAM_AUTH) {
+      const idToken = await getGcpIdentityToken(this.baseUrl);
+      headers['X-Serverless-Authorization'] = `Bearer ${idToken}`;
+    }
+
     let response: Response;
     try {
       response = await fetch(url.toString(), {
@@ -134,9 +142,12 @@ export class ServiceHttpClient {
 
   public async health(): Promise<{ ok: boolean; status: number }> {
     try {
-      const res = await fetch(`${this.baseUrl}/health`, {
-        headers: { Accept: 'application/json' },
-      });
+      const headers: Record<string, string> = { Accept: 'application/json' };
+      if (config.GCP_IAM_AUTH) {
+        const idToken = await getGcpIdentityToken(this.baseUrl);
+        headers['X-Serverless-Authorization'] = `Bearer ${idToken}`;
+      }
+      const res = await fetch(`${this.baseUrl}/health`, { headers });
       return { ok: res.ok, status: res.status };
     } catch {
       return { ok: false, status: 503 };

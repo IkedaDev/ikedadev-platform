@@ -1,0 +1,13 @@
+{
+  "name": "ikeda-billing-kill-switch",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Automated GCP Cloud Billing Kill Switch triggered by Budget Pub/Sub alerts.",
+  "main": "index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "google-auth-library": "^9.15.0"
+  }
+}

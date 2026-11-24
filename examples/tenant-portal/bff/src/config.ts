@@ -18,6 +18,12 @@ const envSchema = z.object({
   // M2M fallback key (used by seed script)
   TENANT_API_KEY: z.string().min(1).default('ik_live_dev_tenant_portal_local_2026'),
 
+  // Optional GCP Cloud Run IAM auth (X-Serverless-Authorization via metadata server)
+  GCP_IAM_AUTH: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
   // Upstream Rust services
   IDENTITY_API_URL: z.string().url().default('http://localhost:8082'),
   CRM_API_URL: z.string().url().default('http://localhost:8081'),
