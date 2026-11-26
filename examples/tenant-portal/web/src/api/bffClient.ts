@@ -13,7 +13,11 @@ import type {
   DashboardSummary,
   EnrichedBooking,
   PaginatedResponse,
+  TelemetryEvent,
+  TelemetryEventKind,
+  TelemetryMetricsSummary,
   TenantUser,
+  TrackEventInput,
 } from '../types/api';
 
 const BASE_URL = (import.meta.env.VITE_BFF_URL || 'http://localhost:4000').replace(/\/+$/, '');
@@ -307,4 +311,41 @@ export const bffClient = {
 
   revokeApiKey: (id: string) =>
     request<{ success: boolean }>('DELETE', `/api/identity/api-keys/${id}`),
+
+  // Telemetry & Audit
+  trackTelemetryEvents: async (events: TrackEventInput[]) => {
+    const res = await request<{ success: boolean; data: { accepted: number } }>(
+      'POST',
+      '/api/telemetry/track',
+      { body: { events } },
+    );
+    return res.data;
+  },
+
+  listTelemetryEvents: (params?: {
+    page?: number;
+    limit?: number;
+    kind?: TelemetryEventKind;
+    event_name?: string;
+    source?: string;
+  }) =>
+    request<PaginatedResponse<TelemetryEvent>>('GET', '/api/telemetry/events', {
+      query: params,
+    }),
+
+  getTelemetryMetrics: async (params?: {
+    from?: string;
+    to?: string;
+    kind?: TelemetryEventKind;
+    source?: string;
+  }) => {
+    const res = await request<{
+      success: boolean;
+      data: TelemetryMetricsSummary;
+      meta?: { from: string; to: string };
+    }>('GET', '/api/telemetry/metrics', {
+      query: params,
+    });
+    return res.data;
+  },
 };

@@ -5,6 +5,7 @@ import { catalogClient } from '../clients/catalogClient.js';
 import { crmClient } from '../clients/crmClient.js';
 import { eventsClient } from '../clients/eventsClient.js';
 import { UpstreamApiError, type RequestContext } from '../clients/http.js';
+import { telemetryClient } from '../clients/telemetryClient.js';
 import { getAuthRequestContext } from '../middleware/auth.js';
 import type {
   BookingItemSnapshotInput,
@@ -346,6 +347,25 @@ bookingsRoutes.post('/', async (c) => {
     created_at: booking.created_at,
   };
 
+  telemetryClient.emitAuditEventAsync(
+    {
+      event_name: 'booking.created',
+      resource_type: 'booking',
+      resource_id: booking.id,
+      client_id: client.id,
+      actor_id: ctx.actorId,
+      request_id: ctx.requestId,
+      properties: {
+        booking_code: booking.booking_code,
+        status: booking.status,
+        total_price: booking.total_price,
+        currency: booking.currency,
+        items_count: booking.items.length,
+      },
+    },
+    ctx,
+  );
+
   return c.json(
     {
       success: true,
@@ -400,6 +420,23 @@ bookingsRoutes.patch('/:id/status', async (c) => {
     }
   }
 
+  telemetryClient.emitAuditEventAsync(
+    {
+      event_name: updated.status === 'CANCELLED' ? 'booking.cancelled' : 'booking.updated',
+      resource_type: 'booking',
+      resource_id: updated.id,
+      client_id: updated.client_id,
+      actor_id: ctx.actorId,
+      request_id: ctx.requestId,
+      properties: {
+        booking_code: updated.booking_code,
+        status: updated.status,
+        cancellation_reason: updated.cancellation_reason ?? null,
+      },
+    },
+    ctx,
+  );
+
   const [enriched] = await enrichBookings([updated], ctx);
   return c.json({
     success: true,
@@ -425,6 +462,18 @@ bookingsRoutes.delete('/:id', async (c) => {
       }
     }
   }
+
+  telemetryClient.emitAuditEventAsync(
+    {
+      event_name: 'booking.deleted',
+      resource_type: 'booking',
+      resource_id: id,
+      client_id: existing?.client_id ?? null,
+      actor_id: ctx.actorId,
+      request_id: ctx.requestId,
+    },
+    ctx,
+  );
 
   return c.json({ success: true, message: 'Reserva eliminada y cupo liberado' });
 });

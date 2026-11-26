@@ -46,6 +46,7 @@ export interface BffHealth {
     identity: { ok: boolean; status: number };
     catalog: { ok: boolean; status: number };
     bookings?: { ok: boolean; status: number };
+    telemetry?: { ok: boolean; status: number };
     keycloak?: { ok: boolean; status: number };
   };
 }
@@ -217,4 +218,51 @@ export interface ApiKeySummary {
 export interface CreatedApiKey {
   key: ApiKeySummary;
   raw_key: string;
+}
+
+export type TelemetryEventKind = 'TRACKING' | 'AUDIT';
+
+export interface TelemetryEvent {
+  id: string;
+  tenant_id: string;
+  kind: TelemetryEventKind;
+  event_name: string;
+  source: string;
+  client_id: string | null;
+  actor_id: string | null;
+  anonymous_id: string | null;
+  session_id: string | null;
+  resource_type: string | null;
+  resource_id: string | null;
+  request_id: string | null;
+  properties: Record<string, unknown>;
+  context: Record<string, unknown>;
+  occurred_at: string;
+  received_at: string;
+}
+
+export interface TrackEventInput {
+  kind?: TelemetryEventKind;
+  event_name: string;
+  source?: string;
+  client_id?: string | null;
+  anonymous_id?: string | null;
+  session_id?: string | null;
+  resource_type?: string | null;
+  resource_id?: string | null;
+  properties?: Record<string, unknown>;
+  context?: Record<string, unknown>;
+  occurred_at?: string;
+}
+
+export interface TelemetryEventCount {
+  event_name: string;
+  count: number;
+}
+
+export interface TelemetryMetricsSummary {
+  total_events: number;
+  unique_clients: number;
+  unique_sessions: number;
+  by_event_name: TelemetryEventCount[];
 }

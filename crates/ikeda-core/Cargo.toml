@@ -12,6 +12,9 @@ sqlx = ["dep:sqlx"]
 
 [dependencies]
 axum = { workspace = true }
+http = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
 utoipa = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -19,6 +22,7 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 async-trait = { workspace = true }
@@ -28,7 +32,6 @@ tokio = { workspace = true }
 sqlx = { workspace = true, optional = true }
 
 [dev-dependencies]
-tower = { workspace = true }
 rsa = { version = "0.9", features = ["pem", "sha2"] }
 rand = "0.8"
 base64 = "0.22"

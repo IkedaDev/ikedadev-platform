@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { crmClient } from '../clients/crmClient.js';
-import type { RequestContext } from '../clients/http.js';
+import { telemetryClient } from '../clients/telemetryClient.js';
 import type { Criteria } from '../types/platform.js';
 
 const createClientSchema = z.object({
@@ -50,6 +50,21 @@ clientsRoutes.post('/', async (c) => {
     email: parsed.data.email || null,
   };
   const created = await crmClient.createClient(payload, ctx);
+  telemetryClient.emitAuditEventAsync(
+    {
+      event_name: 'client.created',
+      resource_type: 'client',
+      resource_id: created.id,
+      client_id: created.id,
+      actor_id: ctx.actorId,
+      request_id: ctx.requestId,
+      properties: {
+        full_name: created.full_name,
+        email: created.email,
+      },
+    },
+    ctx,
+  );
   return c.json({ success: true, data: created }, 201);
 });
 
@@ -71,6 +86,20 @@ clientsRoutes.patch('/:id', async (c) => {
   }
 
   const updated = await crmClient.updateClient(id, parsed.data, ctx);
+  telemetryClient.emitAuditEventAsync(
+    {
+      event_name: 'client.updated',
+      resource_type: 'client',
+      resource_id: updated.id,
+      client_id: updated.id,
+      actor_id: ctx.actorId,
+      request_id: ctx.requestId,
+      properties: {
+        updated_fields: Object.keys(parsed.data),
+      },
+    },
+    ctx,
+  );
   return c.json({ success: true, data: updated });
 });
 
@@ -79,5 +108,16 @@ clientsRoutes.delete('/:id', async (c) => {
   const ctx = getCtx(c);
   const id = c.req.param('id');
   await crmClient.deleteClient(id, ctx);
+  telemetryClient.emitAuditEventAsync(
+    {
+      event_name: 'client.deleted',
+      resource_type: 'client',
+      resource_id: id,
+      client_id: id,
+      actor_id: ctx.actorId,
+      request_id: ctx.requestId,
+    },
+    ctx,
+  );
   return c.json({ success: true, message: 'Cliente eliminado' });
 });

@@ -87,6 +87,7 @@ jobs:
           EVENTS_API_URL: ${{ vars.EVENTS_API_URL }}
           CATALOG_API_URL: ${{ vars.CATALOG_API_URL }}
           BOOKINGS_API_URL: ${{ vars.BOOKINGS_API_URL }}
+          TELEMETRY_API_URL: ${{ vars.TELEMETRY_API_URL }}
         run: |
           ENV_VARS="GCP_IAM_AUTH=true"
           [ -n "${BFF_PUBLIC_URL}" ] && ENV_VARS="${ENV_VARS},BFF_PUBLIC_URL=${BFF_PUBLIC_URL}"
@@ -103,6 +104,7 @@ jobs:
           [ -n "${EVENTS_API_URL}" ] && ENV_VARS="${ENV_VARS},EVENTS_API_URL=${EVENTS_API_URL}"
           [ -n "${CATALOG_API_URL}" ] && ENV_VARS="${ENV_VARS},CATALOG_API_URL=${CATALOG_API_URL}"
           [ -n "${BOOKINGS_API_URL}" ] && ENV_VARS="${ENV_VARS},BOOKINGS_API_URL=${BOOKINGS_API_URL}"
+          [ -n "${TELEMETRY_API_URL}" ] && ENV_VARS="${ENV_VARS},TELEMETRY_API_URL=${TELEMETRY_API_URL}"
 
           gcloud run deploy "${{ steps.meta.outputs.cloud_run_service }}" \
             --image="${{ steps.meta.outputs.image_uri }}" \

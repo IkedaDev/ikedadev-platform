@@ -1,6 +1,6 @@
 # ikeda-core
 
-`ikeda-core` es la librería central y compartida por todos los microservicios y APIs del ecosistema `ikedadev-platform`. Provee tipos estandarizados, manejo de errores homogéneo, extracción de contexto multi-tenant y un árbol dinámico de filtrado tipo Criteria Pattern.
+`ikeda-core` es la librería central y compartida por todos los microservicios y APIs del ecosistema `ikedadev-platform`. Provee tipos estandarizados, manejo de errores homogéneo, extracción de contexto multi-tenant, un árbol dinámico de filtrado tipo Criteria Pattern y observabilidad HTTP estructurada.
 
 ## Módulos y Capacidades
 
@@ -34,6 +34,15 @@
   - `FilterGroup`: combinación recursiva mediante `and` y `or`.
   - `OrderBy`: especificación de ordenamiento (`field`, `direction: asc | desc`).
   - `Pagination`: paginación delimitada con cálculo de `offset()` y límites de seguridad (`MAX_LIMIT = 100`).
+
+### 5. `observability` (Tracing Estructurado y Correlación HTTP)
+- `init_tracing(service_name: &str)`: inicializa el suscriptor global de `tracing` de forma idempotente (`.try_init()`, sin pánico si ya está configurado) leyendo las siguientes variables de entorno:
+  - `RUST_LOG`: filtro de niveles (por defecto `info,tower_http=info,sqlx=warn`).
+  - `LOG_FORMAT`: formato de salida `json` o `pretty` (por defecto `json`). En modo `json` emite logs estructurados planos a `stdout` compatibles con **Grafana Loki** (LogQL `| json`) y **Google Cloud Logging**.
+- `REQUEST_ID_HEADER`: constante `"x-request-id"` usada para correlación distribuida de extremo a extremo.
+- `request_id_layer()`: combina `SetRequestIdLayer` y `PropagateRequestIdLayer` (`tower-http`) para propagar `X-Request-Id` si viene en la petición o generar un UUID si no existe, devolviéndolo siempre en la respuesta HTTP.
+- `http_trace_layer(service_name: &'static str)`: capa Tower/Axum reutilizable que registra en cada petición/respuesta `service`, `request_id`, `method`, `path`, `status`, `latency_ms` y `tenant_id` (cuando está disponible vía `X-Tenant-Id` o `TenantContext`). Debe montarse con `request_id_layer()` como capa más externa para que `http_trace_layer` capture el `X-Request-Id` generado.
+- **Seguridad en logs:** las cabeceras sensibles (`Authorization`, `X-Api-Key`, `Cookie`) **nunca** se registran en logs ni spans HTTP.
 
 ## Verificación de Calidad
 

@@ -30,6 +30,7 @@ const envSchema = z.object({
   EVENTS_API_URL: z.string().url().default('http://localhost:8080'),
   CATALOG_API_URL: z.string().url().default('http://localhost:8083'),
   BOOKINGS_API_URL: z.string().url().default('http://localhost:8084'),
+  TELEMETRY_API_URL: z.string().url().default('http://localhost:8085'),
 });
 
 const parsed = envSchema.safeParse(process.env);

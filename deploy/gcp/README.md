@@ -1,6 +1,6 @@
 # Despliegue en GCP (Cloud Run + Artifact Registry + Neon + Cloudflare)
 
-Runbook operativo paso a paso para desplegar **`ikedadev-platform`** (5 microservicios Rust privados + `tenant-portal-bff` público) en **Google Cloud Platform** con costo fijo **\$0**, región única Tier 1 (`us-central1`), autenticación sin llaves JSON (**Workload Identity Federation**) y protección automática de facturación (**Billing Kill Switch**).
+Runbook operativo paso a paso para desplegar **`ikedadev-platform`** (6 microservicios Rust privados + `tenant-portal-bff` público) en **Google Cloud Platform** con costo fijo **\$0**, región única Tier 1 (`us-central1`), autenticación sin llaves JSON (**Workload Identity Federation**) y protección automática de facturación (**Billing Kill Switch**).
 
 ---
 
@@ -8,8 +8,9 @@ Runbook operativo paso a paso para desplegar **`ikedadev-platform`** (5 microser
 
 - **Región única:** `us-central1` (capa gratuita Tier 1 de Cloud Run).
 - **Cero servicios de costo fijo:** Sin Cloud SQL, sin VPC Connectors, sin Cloud NAT, sin Cloud Load Balancer, sin IPs estáticas. Todo el build Docker de Rust ocurre en GitHub Actions (`cargo-chef` + caché GHA).
-- **Topes físicos en los 6 servicios Cloud Run:** `--min-instances=0`, `--max-instances=1`, `--cpu=1`, `--memory=256Mi`, `--cpu-throttling`, `--concurrency=80`, `--timeout=15s`, `RUST_LOG=info,sqlx=warn`.
-- **Aislamiento de red/IAM:** Los 5 microservicios Rust son **privados** (`--no-allow-unauthenticated`, ejecutados con `platform-api-runtime` sin permisos admin). Solo `tenant-portal-bff` es público (`--allow-unauthenticated`) y usa `bff-invoker` + `GCP_IAM_AUTH=true` enviando `X-Serverless-Authorization: Bearer <ID_TOKEN>` sin tocar `Authorization` ni `X-Api-Key`.
+- **Topes físicos en los 7 servicios Cloud Run:** `--min-instances=0`, `--max-instances=1`, `--cpu=1`, `--memory=256Mi`, `--cpu-throttling`, `--concurrency=80`, `--timeout=15s`, `RUST_LOG=info,sqlx=warn`, `LOG_FORMAT=json`.
+- **Aislamiento de red/IAM:** Los 6 microservicios Rust son **privados** (`--no-allow-unauthenticated`, ejecutados con `platform-api-runtime` sin permisos admin). Solo `tenant-portal-bff` es público (`--allow-unauthenticated`) y usa `bff-invoker` + `GCP_IAM_AUTH=true` enviando `X-Serverless-Authorization: Bearer <ID_TOKEN>` sin tocar `Authorization` ni `X-Api-Key`.
+- **Observabilidad nativa en Cloud Run:** Con `LOG_FORMAT=json`, los logs estructurados que los servicios emiten a `stdout` son capturados e indexados automáticamente por **Google Cloud Logging** sin agentes extra ni costo fijo. El stack opcional de Loki + Promtail + Grafana en `deploy/observability/` es únicamente para desarrollo local o clústeres K3s.
 - **Portabilidad total a K3s:** Ningún servicio Rust ni `ikeda-core` incluye SDKs propietarios de GCP.
 
 ---
@@ -77,11 +78,17 @@ gcloud iam workload-identity-pools providers describe github-provider \
 4. **Threshold rules:** Agrega alertas en **10%**, **50%**, **90%** y **100%** tanto en **Actual** como en **Forecasted**.
 5. **Actions → Manage notifications:** Marca **Connect a Pub/Sub topic to this budget** y selecciona `projects/${GCP_PROJECT_ID}/topics/billing-alerts`.
 
-### 3.2 Otorgar Permiso Mínimo en la Billing Account a `billing-kill-switch`
-Para que la función pueda desvincular la cuenta de facturación del proyecto (`PUT /v1/projects/{projectId}/billingInfo`), su Service Account necesita `roles/billing.projectManager` en el proyecto (lo asigna `deploy.sh`) y permiso en la **Billing Account**:
+### 3.2 Otorgar Permisos Mínimos a `billing-kill-switch`
+`deploy/gcp/kill-switch/deploy.sh` asigna automáticamente los roles mínimos a nivel de proyecto y servicio (sin `Owner` ni `Editor`):
+- `roles/billing.projectManager` (vincular/desvincular billing del proyecto).
+- `roles/browser` (`resourcemanager.projects.get`, requerido por `GET /v1/projects/{projectId}/billingInfo`).
+- `roles/eventarc.eventReceiver` y `roles/run.invoker` (sobre el servicio `billing-kill-switch` para recibir eventos Pub/Sub Gen 2).
+- `roles/serviceusage.serviceUsageConsumer` (consumir `cloudbilling.googleapis.com`).
+
+Además, otorga el permiso mínimo sobre la **Billing Account** para poder desvincular el proyecto:
 
 ```bash
-# Primero despliega en modo DRY_RUN=true (esto crea la SA billing-kill-switch)
+# Primero despliega en modo DRY_RUN=true (esto crea la SA billing-kill-switch y sus roles de proyecto)
 DRY_RUN=true MAX_COST_USD=2.00 GCP_PROJECT_ID="${GCP_PROJECT_ID}" \
   bash deploy/gcp/kill-switch/deploy.sh
 
@@ -116,21 +123,21 @@ DRY_RUN=false MAX_COST_USD=2.00 GCP_PROJECT_ID="${GCP_PROJECT_ID}" \
 
 ---
 
-## Paso 4: Provisionar las 5 Bases en Neon (Roles `NOBYPASSRLS` + `api_key_reader`)
+## Paso 4: Provisionar las 6 Bases en Neon (Roles `NOBYPASSRLS` + `api_key_reader`)
 
-Crea un proyecto en **Neon** (región **AWS us-east-1** o **us-east-2**, cercana a `us-central1`) y crea las 5 bases de datos:
-`identity_db`, `crm_db`, `events_db`, `catalog_db` y `bookings_db`.
+Crea un proyecto en **Neon** (región **AWS us-east-1** o **us-east-2**, cercana a `us-central1`) y crea las 6 bases de datos:
+`identity_db`, `crm_db`, `events_db`, `catalog_db`, `bookings_db` y `telemetry_db`.
 
 Aplica las migraciones SQL de `services/<servicio>/migrations/*.sql` en cada base correspondiente usando el rol dueño (`neondb_owner`).
 
-### 4.1 Crear rol de aplicación con `NOBYPASSRLS` (obligatorio en las 5 bases)
+### 4.1 Crear rol de aplicación con `NOBYPASSRLS` (obligatorio en las 6 bases)
 El rol dueño de Neon tiene privilegios elevados; las APIs en Cloud Run **deben** conectarse con un rol `NOBYPASSRLS` para que PostgreSQL RLS sea inquebrantable:
 
 ```sql
 -- Ejecutar como neondb_owner (una vez por proyecto Neon para crear el rol)
 CREATE ROLE ikeda_app LOGIN PASSWORD 'CAMBIAR_PASSWORD_FUERTE_APP' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
 
--- Ejecutar DENTRO DE CADA UNA de las 5 bases (identity_db, crm_db, events_db, catalog_db, bookings_db):
+-- Ejecutar DENTRO DE CADA UNA de las 6 bases (identity_db, crm_db, events_db, catalog_db, bookings_db, telemetry_db):
 GRANT CONNECT ON DATABASE current_database() TO ikeda_app; -- o reemplaza por el nombre de la DB
 GRANT USAGE ON SCHEMA public TO ikeda_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ikeda_app;
@@ -140,7 +147,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
 ```
 
 ### 4.2 Crear rol `api_key_reader` de privilegio mínimo en `identity_db`
-Las 4 APIs de dominio (`crm-api`, `events-api`, `catalog-api`, `bookings-api`) usan `IDENTITY_DATABASE_URL` exclusivamente para validar API keys vía `authenticate_api_key($1)` (`SECURITY DEFINER`):
+Las 5 APIs de dominio (`crm-api`, `events-api`, `catalog-api`, `bookings-api`, `telemetry-api`) usan `IDENTITY_DATABASE_URL` exclusivamente para validar API keys vía `authenticate_api_key($1)` (`SECURITY DEFINER`):
 
 ```sql
 -- Ejecutar en identity_db como neondb_owner:
@@ -194,6 +201,7 @@ En **GitHub → Settings → Environments**, crea dos entornos: **`qa`** (rama `
 | `EVENTS_API_URL` | URL privada `https://events-api-qa-xxxx-uc.a.run.app` |
 | `CATALOG_API_URL` | URL privada `https://catalog-api-qa-xxxx-uc.a.run.app` |
 | `BOOKINGS_API_URL` | URL privada `https://bookings-api-qa-xxxx-uc.a.run.app` |
+| `TELEMETRY_API_URL` | URL privada `https://telemetry-api-qa-xxxx-uc.a.run.app` |
 
 ### Environment Secrets (`secrets.*` dentro de `qa` y `prod`)
 
@@ -204,6 +212,7 @@ En **GitHub → Settings → Environments**, crea dos entornos: **`qa`** (rama `
 | `EVENTS_DATABASE_URL` | `postgres://ikeda_app:<pass>@<neon-pooler>/events_db?sslmode=require` |
 | `CATALOG_DATABASE_URL` | `postgres://ikeda_app:<pass>@<neon-pooler>/catalog_db?sslmode=require` |
 | `BOOKINGS_DATABASE_URL` | `postgres://ikeda_app:<pass>@<neon-pooler>/bookings_db?sslmode=require` |
+| `TELEMETRY_DATABASE_URL` | `postgres://ikeda_app:<pass>@<neon-pooler>/telemetry_db?sslmode=require` |
 | `IDENTITY_READER_DATABASE_URL` | `postgres://api_key_reader:<pass>@<neon-pooler>/identity_db?sslmode=require` |
 | `KEYCLOAK_ADMIN_CLIENT_SECRET` | Secreto del cliente `identity-api-admin` |
 | `KEYCLOAK_BFF_CLIENT_SECRET` | Secreto del cliente `tenant-portal-bff` |
@@ -246,7 +255,7 @@ ID_TOKEN="$(gcloud auth print-identity-token --audiences="${BOOKINGS_URL}")"
 curl -i -H "X-Serverless-Authorization: Bearer ${ID_TOKEN}" "${BOOKINGS_URL}/health"
 curl -i -H "X-Serverless-Authorization: Bearer ${ID_TOKEN}" "${BOOKINGS_URL}/v1/bookings/00000000-0000-0000-0000-000000000000"
 
-# 4. Verificar health agregado desde el BFF público (debe mostrar ok: true en los 5 servicios Rust)
+# 4. Verificar health agregado desde el BFF público (debe mostrar ok: true en los 6 servicios Rust)
 curl -s https://bff-qa.ikedadev.com/health | jq .
 ```
 

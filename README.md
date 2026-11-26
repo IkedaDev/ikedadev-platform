@@ -9,39 +9,43 @@ Monorepo modular en **Rust (Cargo Workspace)** diseñado bajo **Clean Architectu
 ```text
 ikedadev-platform/
 ├── Cargo.toml                           # Workspace root con dependencias unificadas
-├── docker-compose.yml                   # Entorno local por perfiles (postgres, keycloak, apis, full)
+├── docker-compose.yml                   # Entorno local por perfiles (postgres, keycloak, apis, full, observability)
 ├── crates/
-│   └── ikeda-core/                      # Librería compartida por los 4 microservicios
+│   └── ikeda-core/                      # Librería compartida por los 6 microservicios
 │       ├── response/                    # ApiResponse<T>, PaginatedApiResponse<T>, PaginationMeta
 │       ├── error/                       # AppError mapeado a HTTP con enmascaramiento seguro en 500
 │       ├── tenant/                      # TenantContext, Extractor Axum (JWT JWKS + CachedApiKeyValidator)
-│       └── criteria/                    # Criteria Pattern (AND/OR recursivo) + sqlx_builder (feature `sqlx`)
+│       ├── criteria/                    # Criteria Pattern (AND/OR recursivo) + sqlx_builder (feature `sqlx`)
+│       └── observability/               # init_tracing (JSON/pretty), http_trace_layer y request_id_layer (X-Request-Id)
 ├── services/
 │   ├── events-api/                      # Calendarios, eventos, recurrencia RFC 5545 y disponibilidad
 │   ├── crm-api/                         # Clientes finales multi-tenant, JSONB metadata y búsqueda Criteria
 │   ├── identity-api/                    # Tenants, API Keys M2M (SHA-256) y usuarios sincronizados con Keycloak
 │   ├── catalog-api/                     # Categorías, servicios, productos, bundles, variantes y batch lookup
-│   └── bookings-api/                    # Reservas multi-servicio con snapshots congelados, estados e idempotencia
+│   ├── bookings-api/                    # Reservas multi-servicio con snapshots congelados, estados e idempotencia
+│   └── telemetry-api/                   # Eventos append-only (TRACKING/AUDIT), timeline de cliente y métricas
 ├── deploy/
 │   ├── keycloak/ikeda-realm.json        # Realm `ikeda` auto-importado (roles, clientes OIDC y usuarios demo)
+│   ├── observability/                   # Stack opcional local/K3s: Grafana Loki, Promtail y Grafana pre-aprovisionado
 │   ├── k8s/base/                        # Manifiestos Kustomize genéricos (Deployment, Service, ConfigMap)
 │   └── argo/workflow-template.yaml      # Plantilla declarativa para Argo Workflows
 ├── scripts/
-│   ├── init-databases.sh                # Crea las 5 DBs, aplica migraciones y siembra tenant/key local
+│   ├── init-databases.sh                # Crea las 6 DBs, aplica migraciones y siembra tenant/key local
 │   ├── test-api.sh / test-api.ps1       # Scripts de smoke test local
 ├── docs/
 │   └── platform-documentation.html      # Documentación técnica interactiva de la plataforma
 ├── examples/
 │   └── tenant-portal/                   # Portal de ejemplo (BFF Hono + Web React/Vite + Keycloak PKCE)
-│       ├── bff/                         # Backend-for-Frontend con sesiones HttpOnly y refresh automático
+│       ├── bff/                         # Backend-for-Frontend con sesiones HttpOnly, refresh, X-Request-Id y AUDIT
 │       └── web/                         # SPA administrativa en React 19 + TypeScript + Vite
 └── .github/workflows/
     ├── ci.yml                           # Quality Gate del workspace (fmt, clippy -D warnings, tests)
-    ├── events-api.yml                   # Build OCI multi-stage (cargo-chef) y push a ghcr.io
-    ├── crm-api.yml                      # Build OCI multi-stage (cargo-chef) y push a ghcr.io
-    ├── identity-api.yml                 # Build OCI multi-stage (cargo-chef) y push a ghcr.io
-    ├── catalog-api.yml                  # Build OCI multi-stage (cargo-chef) y push a ghcr.io
-    └── bookings-api.yml                 # Build OCI multi-stage (cargo-chef) y push a ghcr.io
+    ├── events-api.yml                   # Build OCI multi-stage (cargo-chef) y push a ghcr.io / Artifact Registry
+    ├── crm-api.yml                      # Build OCI multi-stage (cargo-chef) y push a ghcr.io / Artifact Registry
+    ├── identity-api.yml                 # Build OCI multi-stage (cargo-chef) y push a ghcr.io / Artifact Registry
+    ├── catalog-api.yml                  # Build OCI multi-stage (cargo-chef) y push a ghcr.io / Artifact Registry
+    ├── bookings-api.yml                 # Build OCI multi-stage (cargo-chef) y push a ghcr.io / Artifact Registry
+    └── telemetry-api.yml                # Build OCI multi-stage (cargo-chef) y push a ghcr.io / Artifact Registry
 ```
 
 ---
@@ -55,8 +59,10 @@ ikedadev-platform/
 | **`identity-api`** | `8082` | `identity_db` | `http://localhost:8082/swagger-ui` | `http://localhost:8082/openapi.json` | `http://localhost:8082/health` |
 | **`catalog-api`** | `8083` | `catalog_db` | `http://localhost:8083/swagger-ui` | `http://localhost:8083/openapi.json` | `http://localhost:8083/health` |
 | **`bookings-api`** | `8084` | `bookings_db` | `http://localhost:8084/swagger-ui` | `http://localhost:8084/openapi.json` | `http://localhost:8084/health` |
+| **`telemetry-api`** | `8085` | `telemetry_db` | `http://localhost:8085/swagger-ui` | `http://localhost:8085/openapi.json` | `http://localhost:8085/health` |
 | **Keycloak (`ikeda`)** | `8180` | In-memory (dev) | — | `http://localhost:8180/realms/ikeda/.well-known/openid-configuration` | `http://localhost:8180` |
-| **PostgreSQL 17** | `5432` | Multi-DB (`events_db`, `crm_db`, `identity_db`, `catalog_db`, `bookings_db`) | — | — | `pg_isready` |
+| **PostgreSQL 17** | `5432` | Multi-DB (`events_db`, `crm_db`, `identity_db`, `catalog_db`, `bookings_db`, `telemetry_db`) | — | — | `pg_isready` |
+| **Grafana / Loki** *(opcional)* | `3000` / `3100` | Volumen `loki_data` | — | — | `http://localhost:3100/ready` |
 | **Tenant Portal BFF** | `4000` | — (stateless + Keycloak) | — | — | `http://localhost:4000/health` |
 | **Tenant Portal Web** | `5173` | — | — | — | `http://localhost:5173` |
 
@@ -65,6 +71,7 @@ ikedadev-platform/
 ## 🚀 Pila Tecnológica
 
 - **Backend (Rust 1.85+, Edición 2021):** `axum`, `tokio`, `tower-http`, `sqlx` (PostgreSQL + `tls-rustls`), `utoipa` + `utoipa-swagger-ui`, `jsonwebtoken` (JWKS RS256), `rrule` (RFC 5545).
+- **Observabilidad y Telemetría:** módulo compartido `ikeda_core::observability` (logs JSON/pretty vía `tracing`, correlación `X-Request-Id`, latencia y `tenant_id` sin registrar credenciales sensibles), microservicio `telemetry-api` (`:8085`) para eventos `TRACKING`/`AUDIT` y perfil opcional `observability` en Docker Compose (**Loki + Promtail + Grafana** en `deploy/observability/`).
 - **Identidad y Autenticación:** Keycloak 26 (OIDC Authorization Code + PKCE para usuarios, `client_credentials` para provisión desde `identity-api`) y API Keys M2M (SHA-256) centralizadas en `identity_db` con caché en memoria (`CachedApiKeyValidator`).
 - **Aislamiento Multi-Tenant:** PostgreSQL **Row-Level Security (RLS)** habilitado y forzado (`ENABLE` + `FORCE ROW LEVEL SECURITY`) en todas las tablas de negocio.
 - **Portal de Referencia (`examples/tenant-portal`):** BFF en TypeScript + Hono (`@hono/node-server`, `zod`) y SPA en React + Vite.
@@ -73,7 +80,7 @@ ikedadev-platform/
 
 ## 🔒 Aislamiento Multi-Tenant y Seguridad
 
-Todas las tablas de negocio en los 4 servicios aplican **RLS estricto** basado en la variable de sesión transaccional `app.current_tenant`:
+Todas las tablas de negocio en los 6 servicios aplican **RLS estricto** basado en la variable de sesión transaccional `app.current_tenant`:
 
 ```sql
 ALTER TABLE <tabla> ENABLE ROW LEVEL SECURITY;
@@ -86,7 +93,7 @@ CREATE POLICY tenant_isolation_<tabla> ON <tabla>
 ```
 
 - Cada repositorio SQLx abre una transacción mediante `begin_tenant_tx(pool, tenant_id)` ejecutando `SELECT set_config('app.current_tenant', $1, true);` (local a la transacción, seguro con connection poolers como PgBouncer/Neon).
-- `events-api`, `crm-api`, `catalog-api` y `bookings-api` validan `X-Api-Key` contra `IDENTITY_DATABASE_URL` mediante la función `SECURITY DEFINER` `authenticate_api_key($1)` envuelta en `CachedApiKeyValidator` (con fallback a `DATABASE_URL` solo para pruebas locales aisladas).
+- `events-api`, `crm-api`, `catalog-api`, `bookings-api` y `telemetry-api` validan `X-Api-Key` contra `IDENTITY_DATABASE_URL` mediante la función `SECURITY DEFINER` `authenticate_api_key($1)` envuelta en `CachedApiKeyValidator` (con fallback a `DATABASE_URL` solo para pruebas locales aisladas).
 - El traductor de `Criteria` a SQLx (`ikeda-core` con feature `sqlx`) valida todos los campos contra una whitelist por entidad, escapa wildcards `ILIKE` (`ESCAPE '\'`), limita la profundidad de anidamiento y usa parámetros vinculados (`push_bind`).
 - El feature flag `dev-auth` está **deshabilitado por defecto** en todos los `Cargo.toml` y `Dockerfile`.
 
@@ -97,17 +104,20 @@ CREATE POLICY tenant_isolation_<tabla> ON <tabla>
 El archivo [`docker-compose.yml`](docker-compose.yml) usa perfiles para levantar solo lo que necesites:
 
 ```bash
-# 1. Solo PostgreSQL (crea las 4 DBs, corre migraciones y siembra tenant/key de desarrollo)
+# 1. Solo PostgreSQL (crea las 6 DBs, corre migraciones y siembra tenant/key de desarrollo)
 docker compose up -d
 
 # 2. PostgreSQL + Keycloak (auto-importa deploy/keycloak/ikeda-realm.json en http://localhost:8180)
 docker compose --profile keycloak up -d
 
-# 3. PostgreSQL + los 4 microservicios Rust compilados en contenedor
+# 3. PostgreSQL + los 6 microservicios Rust compilados en contenedor
 docker compose --profile apis up -d
 
-# 4. Stack completo (PostgreSQL + Keycloak + los 4 microservicios Rust)
+# 4. Stack completo (PostgreSQL + Keycloak + los 6 microservicios Rust)
 docker compose --profile full up -d
+
+# 5. Stack completo + observabilidad local opcional (Loki :3100 + Promtail + Grafana :3000)
+docker compose --profile full --profile observability up -d
 ```
 
 También puedes ejecutar cada microservicio directamente con Cargo (copiando su `.env.example` a `.env` si deseas sobreescribir variables):
@@ -118,6 +128,7 @@ cargo run -p crm-api
 cargo run -p identity-api
 cargo run -p catalog-api
 cargo run -p bookings-api
+cargo run -p telemetry-api
 ```
 
 ### Portal de Ejemplo (`examples/tenant-portal`)
@@ -166,10 +177,10 @@ cd examples/tenant-portal/web && npx tsc --noEmit
 
 ## 🔄 CI/CD Modular (GitHub Actions)
 
-Los 6 workflows en `.github/workflows/` operan de forma independiente con filtros `paths:`:
+Los workflows en `.github/workflows/` operan de forma independiente con filtros `paths:`:
 
 1. **[`ci.yml`](.github/workflows/ci.yml):** Quality Gate en PRs y pushes a `main`/`develop` (`cargo fmt`, `cargo clippy -D warnings`, `cargo test --workspace --lib`).
-2. **[`events-api.yml`](.github/workflows/events-api.yml), [`crm-api.yml`](.github/workflows/crm-api.yml), [`identity-api.yml`](.github/workflows/identity-api.yml), [`catalog-api.yml`](.github/workflows/catalog-api.yml), [`bookings-api.yml`](.github/workflows/bookings-api.yml):** Compilan cada servicio con `cargo-chef` y Docker Buildx únicamente cuando cambia su carpeta, `crates/ikeda-core`, `Cargo.toml` o `Cargo.lock`, publicando imágenes inmutables en `ghcr.io` etiquetadas con `prod-<short-sha>` / `qa-<short-sha>` y bloque listo para desplegar en Google Cloud Run o Kubernetes ([`deploy/k8s/base`](deploy/k8s/base), [`deploy/argo`](deploy/argo)).
+2. **[`events-api.yml`](.github/workflows/events-api.yml), [`crm-api.yml`](.github/workflows/crm-api.yml), [`identity-api.yml`](.github/workflows/identity-api.yml), [`catalog-api.yml`](.github/workflows/catalog-api.yml), [`bookings-api.yml`](.github/workflows/bookings-api.yml), [`telemetry-api.yml`](.github/workflows/telemetry-api.yml):** Compilan cada servicio con `cargo-chef` y Docker Buildx únicamente cuando cambia su carpeta, `crates/ikeda-core`, `Cargo.toml` o `Cargo.lock`, publicando imágenes inmutables etiquetadas con `prod-<short-sha>` / `qa-<short-sha>` y despliegue automatizado en Google Cloud Run o Kubernetes ([`deploy/k8s/base`](deploy/k8s/base), [`deploy/argo`](deploy/argo)).
 
 ---
 
@@ -181,4 +192,5 @@ npx openapi-typescript http://localhost:8081/openapi.json -o src/api/crm.d.ts
 npx openapi-typescript http://localhost:8082/openapi.json -o src/api/identity.d.ts
 npx openapi-typescript http://localhost:8083/openapi.json -o src/api/catalog.d.ts
 npx openapi-typescript http://localhost:8084/openapi.json -o src/api/bookings.d.ts
+npx openapi-typescript http://localhost:8085/openapi.json -o src/api/telemetry.d.ts
 ```

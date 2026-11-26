@@ -2,12 +2,13 @@ name: ikedadev-platform
 
 services:
   # ============================================================================
-  # 1. PostgreSQL Database (Multi-DB Auto-Init: events_db, crm_db, identity_db, catalog_db, bookings_db)
+  # 1. PostgreSQL Database (Multi-DB Auto-Init: events_db, crm_db, identity_db, catalog_db, bookings_db, telemetry_db)
   #    Always starts as base infrastructure:
-  #      docker compose up -d                    -> postgres only
-  #      docker compose --profile keycloak up -d -> postgres + keycloak
-  #      docker compose --profile apis up -d     -> postgres + 5 Rust APIs
-  #      docker compose --profile full up -d     -> postgres + keycloak + 5 Rust APIs
+  #      docker compose up -d                         -> postgres only
+  #      docker compose --profile keycloak up -d      -> postgres + keycloak
+  #      docker compose --profile apis up -d          -> postgres + 6 Rust APIs
+  #      docker compose --profile observability up -d -> postgres + loki + promtail + grafana
+  #      docker compose --profile full up -d          -> postgres + keycloak + 6 Rust APIs
   # ============================================================================
   postgres:
     image: postgres:17-alpine
@@ -28,6 +29,7 @@ services:
       - ./services/identity-api/migrations:/migrations/identity:ro
       - ./services/catalog-api/migrations:/migrations/catalog:ro
       - ./services/bookings-api/migrations:/migrations/bookings:ro
+      - ./services/telemetry-api/migrations:/migrations/telemetry:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d identity_db"]
       interval: 3s
@@ -56,6 +58,7 @@ services:
       IDENTITY_DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/identity_db?sslmode=disable"
       DATABASE_MAX_CONNECTIONS: "20"
       DATABASE_MIN_CONNECTIONS: "3"
+      LOG_FORMAT: "${LOG_FORMAT:-json}"
       RUST_LOG: "info,events_api=debug,tower_http=info"
       QSTASH_TOKEN: "mock-dev-token"
       JWKS_URI: "${JWKS_URI:-http://keycloak:8080/realms/ikeda/protocol/openid-connect/certs}"
@@ -82,6 +85,7 @@ services:
       HOST: "0.0.0.0"
       DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/crm_db?sslmode=disable"
       IDENTITY_DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/identity_db?sslmode=disable"
+      LOG_FORMAT: "${LOG_FORMAT:-json}"
       RUST_LOG: "info,crm_api=debug,tower_http=info"
       JWKS_URI: "${JWKS_URI:-http://keycloak:8080/realms/ikeda/protocol/openid-connect/certs}"
       JWT_ISSUER: "${JWT_ISSUER:-http://localhost:8180/realms/ikeda}"
@@ -112,6 +116,7 @@ services:
       KEYCLOAK_CLIENT_SECRET: "${KEYCLOAK_CLIENT_SECRET:-ikeda-identity-admin-secret-2026}"
       JWKS_URI: "${JWKS_URI:-http://keycloak:8080/realms/ikeda/protocol/openid-connect/certs}"
       JWT_ISSUER: "${JWT_ISSUER:-http://localhost:8180/realms/ikeda}"
+      LOG_FORMAT: "${LOG_FORMAT:-json}"
       RUST_LOG: "info,identity_api=debug,tower_http=info"
     ports:
       - "8082:8082"
@@ -137,6 +142,7 @@ services:
       IDENTITY_DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/identity_db?sslmode=disable"
       JWKS_URI: "${JWKS_URI:-http://keycloak:8080/realms/ikeda/protocol/openid-connect/certs}"
       JWT_ISSUER: "${JWT_ISSUER:-http://localhost:8180/realms/ikeda}"
+      LOG_FORMAT: "${LOG_FORMAT:-json}"
       RUST_LOG: "info,catalog_api=debug,tower_http=info"
     ports:
       - "8083:8083"
@@ -162,12 +168,39 @@ services:
       IDENTITY_DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/identity_db?sslmode=disable"
       JWKS_URI: "${JWKS_URI:-http://keycloak:8080/realms/ikeda/protocol/openid-connect/certs}"
       JWT_ISSUER: "${JWT_ISSUER:-http://localhost:8180/realms/ikeda}"
+      LOG_FORMAT: "${LOG_FORMAT:-json}"
       RUST_LOG: "info,bookings_api=debug,tower_http=info"
     ports:
       - "8084:8084"
 
   # ============================================================================
-  # 7. Keycloak Dev Server with Auto-Imported `ikeda` Realm (Port 8180)
+  # 7. Telemetry API (Rust Axum Microservice - Port 8085)
+  #    Profiles: telemetry | apis | full
+  # ============================================================================
+  telemetry-api:
+    container_name: ikedadev-telemetry-api
+    profiles: ["telemetry", "apis", "full"]
+    build:
+      context: .
+      dockerfile: services/telemetry-api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: "8085"
+      HOST: "0.0.0.0"
+      DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/telemetry_db?sslmode=disable"
+      IDENTITY_DATABASE_URL: "postgres://postgres:postgres_password@postgres:5432/identity_db?sslmode=disable"
+      JWKS_URI: "${JWKS_URI:-http://keycloak:8080/realms/ikeda/protocol/openid-connect/certs}"
+      JWT_ISSUER: "${JWT_ISSUER:-http://localhost:8180/realms/ikeda}"
+      LOG_FORMAT: "${LOG_FORMAT:-json}"
+      RUST_LOG: "info,telemetry_api=debug,tower_http=info"
+    ports:
+      - "8085:8085"
+
+  # ============================================================================
+  # 8. Keycloak Dev Server with Auto-Imported `ikeda` Realm (Port 8180)
   #    Start with: docker compose --profile keycloak up -d
   # ============================================================================
   keycloak:
@@ -187,6 +220,55 @@ services:
     volumes:
       - ./deploy/keycloak/ikeda-realm.json:/opt/keycloak/data/import/ikeda-realm.json:ro
 
+  # ============================================================================
+  # 9. Local Observability Stack (Loki + Promtail + Grafana)
+  #    Start with: docker compose --profile observability up -d
+  # ============================================================================
+  loki:
+    image: grafana/loki:3.1.1
+    container_name: ikedadev-loki
+    profiles: ["observability"]
+    command: -config.file=/etc/loki/local-config.yaml
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./deploy/observability/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+
+  promtail:
+    image: grafana/promtail:3.1.1
+    container_name: ikedadev-promtail
+    profiles: ["observability"]
+    command: -config.file=/etc/promtail/config.yml
+    restart: unless-stopped
+    depends_on:
+      - loki
+    volumes:
+      - ./deploy/observability/promtail-config.yaml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: ikedadev-grafana
+    profiles: ["observability"]
+    restart: unless-stopped
+    depends_on:
+      - loki
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./deploy/observability/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+      - grafana_data:/var/lib/grafana
+
 volumes:
   postgres_data:
+    driver: local
+  loki_data:
+    driver: local
+  grafana_data:
     driver: local

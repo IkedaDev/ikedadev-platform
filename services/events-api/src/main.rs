@@ -1,9 +1,8 @@
 use events_api::{infrastructure, presentation};
+use ikeda_core::observability::{http_trace_layer, init_tracing, request_id_layer};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::trace::TraceLayer;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -11,13 +10,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dotenvy::dotenv();
 
     // 2. Initialize structured logging with Tracing
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,events_api=debug,tower_http=debug".into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    init_tracing("events-api");
 
     // 3. Resolve host and port
     let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
@@ -98,7 +91,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 6. Assemble Axum Router
     let app = presentation::create_router(state)
         .layer(cors)
-        .layer(TraceLayer::new_for_http());
+        .layer(http_trace_layer("events-api"))
+        .layer(request_id_layer());
 
     // 7. Bind TCP listener and serve with graceful shutdown
     let listener = tokio::net::TcpListener::bind(&addr).await?;

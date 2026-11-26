@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { catalogClient } from '../clients/catalogClient.js';
-import type { RequestContext } from '../clients/http.js';
+import { telemetryClient } from '../clients/telemetryClient.js';
 import type {
   CreateCatalogItemCommand,
   Criteria,
@@ -155,6 +155,22 @@ itemsRoutes.post('/', async (c) => {
   }
 
   const created = await catalogClient.createItem(parsed.data as CreateCatalogItemCommand, ctx);
+  telemetryClient.emitAuditEventAsync(
+    {
+      event_name: 'catalog.created',
+      resource_type: 'catalog_item',
+      resource_id: created.id,
+      actor_id: ctx.actorId,
+      request_id: ctx.requestId,
+      properties: {
+        name: created.name,
+        item_type: created.item_type,
+        base_price: created.base_price,
+        currency: created.currency,
+      },
+    },
+    ctx,
+  );
   return c.json({ success: true, data: created }, 201);
 });
 
@@ -214,6 +230,20 @@ itemsRoutes.patch('/:id', async (c) => {
   };
 
   const updated = await catalogClient.updateItem(id, cmd, ctx);
+  telemetryClient.emitAuditEventAsync(
+    {
+      event_name: 'catalog.updated',
+      resource_type: 'catalog_item',
+      resource_id: updated.id,
+      actor_id: ctx.actorId,
+      request_id: ctx.requestId,
+      properties: {
+        name: updated.name,
+        updated_fields: Object.keys(parsed.data),
+      },
+    },
+    ctx,
+  );
   return c.json({ success: true, data: updated });
 });
 
@@ -222,5 +252,15 @@ itemsRoutes.delete('/:id', async (c) => {
   const ctx = getCtx(c);
   const id = c.req.param('id');
   await catalogClient.deleteItem(id, ctx);
+  telemetryClient.emitAuditEventAsync(
+    {
+      event_name: 'catalog.deleted',
+      resource_type: 'catalog_item',
+      resource_id: id,
+      actor_id: ctx.actorId,
+      request_id: ctx.requestId,
+    },
+    ctx,
+  );
   return c.json({ success: true, message: 'Ítem eliminado' });
 });

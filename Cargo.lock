@@ -1175,6 +1175,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "hex",
+ "http",
  "jsonwebtoken",
  "rand 0.8.8",
  "reqwest",
@@ -1186,7 +1187,9 @@ dependencies = [
  "thiserror",
  "tokio",
  "tower",
+ "tower-http",
  "tracing",
+ "tracing-subscriber",
  "utoipa",
  "uuid",
 ]
@@ -2803,6 +2806,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "telemetry-api"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "dotenvy",
+ "hex",
+ "ikeda-core",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "utoipa",
+ "utoipa-swagger-ui",
+ "uuid",
+]
+
+[[package]]
 name = "thiserror"
 version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2960,6 +2988,7 @@ dependencies = [
  "tower-service",
  "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]

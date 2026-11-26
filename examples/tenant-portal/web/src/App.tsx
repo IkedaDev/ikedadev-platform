@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { bffClient } from './api/bffClient';
+import { tracker } from './api/tracker';
 import { Sidebar, type NavSection } from './components/Sidebar';
 import type { AuthUser, BffHealth } from './types/api';
 import { BookingsView } from './views/BookingsView';
@@ -8,6 +9,7 @@ import { ClientsView } from './views/ClientsView';
 import { DashboardView } from './views/DashboardView';
 import { IdentityView } from './views/IdentityView';
 import { LoginView } from './views/LoginView';
+import { TelemetryView } from './views/TelemetryView';
 
 export function App() {
   const [section, setSection] = useState<NavSection>('dashboard');
@@ -60,6 +62,14 @@ export function App() {
     return () => clearInterval(interval);
   }, [checkSession, checkHealth]);
 
+  useEffect(() => {
+    if (!user) return;
+    tracker.trackPageView(section, {
+      user_id: user.id,
+      tenant_id: user.tenant_id,
+    });
+  }, [section, user]);
+
   const handleLogout = async () => {
     try {
       const res = await bffClient.logout();
@@ -110,6 +120,7 @@ export function App() {
         {section === 'clients' && <ClientsView />}
         {section === 'catalog' && <CatalogView />}
         {section === 'bookings' && <BookingsView />}
+        {section === 'telemetry' && <TelemetryView />}
         {section === 'identity' && <IdentityView />}
       </main>
     </div>

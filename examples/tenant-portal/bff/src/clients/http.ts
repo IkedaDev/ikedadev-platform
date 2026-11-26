@@ -4,6 +4,8 @@ import { getGcpIdentityToken } from './gcpAuth.js';
 
 export interface RequestContext {
   authorization?: string;
+  requestId?: string;
+  actorId?: string;
 }
 
 export class UpstreamApiError extends Error {
@@ -63,6 +65,10 @@ export class ServiceHttpClient {
 
     if (options?.body !== undefined) {
       headers['Content-Type'] = 'application/json';
+    }
+
+    if (options?.ctx?.requestId) {
+      headers['X-Request-Id'] = options.ctx.requestId;
     }
 
     // Production auth priority:

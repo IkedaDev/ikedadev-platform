@@ -5,6 +5,10 @@ pub use crate::criteria::{
     Pagination, DEFAULT_LIMIT, DEFAULT_PAGE, MAX_LIMIT,
 };
 pub use crate::error::{AppError, ValidationErrorDetail};
+pub use crate::observability::{
+    http_trace_layer, init_tracing, request_id_layer, LogFormat, ObservabilityConfig,
+    DEFAULT_RUST_LOG, REQUEST_ID_HEADER,
+};
 pub use crate::response::{ApiResponse, PaginatedApiResponse, PaginationMeta};
 pub use crate::tenant::{
     hash_api_key, ApiKeyValidator, AuthSource, AuthenticatedKey, AuthenticatedUser,

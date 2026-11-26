@@ -1,21 +1,14 @@
 use bookings_api::{infrastructure, presentation};
+use ikeda_core::observability::{http_trace_layer, init_tracing, request_id_layer};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::trace::TraceLayer;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dotenvy::dotenv();
 
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,bookings_api=debug,tower_http=debug".into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    init_tracing("bookings-api");
 
     let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port: u16 = std::env::var("PORT")
@@ -93,7 +86,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = presentation::create_router(state)
         .layer(cors)
-        .layer(TraceLayer::new_for_http());
+        .layer(http_trace_layer("bookings-api"))
+        .layer(request_id_layer());
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(%addr, "Bookings API listening. Swagger UI at http://{addr}/swagger-ui");

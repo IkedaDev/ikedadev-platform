@@ -4,7 +4,7 @@ const { GoogleAuth } = require('google-auth-library');
 
 const BILLING_API_BASE = 'https://cloudbilling.googleapis.com/v1';
 const auth = new GoogleAuth({
-  scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+  scopes: ['https://www.googleapis.com/auth/cloud-billing'],
 });
 
 /**
@@ -23,6 +23,20 @@ function parseBudgetPayload(cloudEvent) {
 
   const decoded = Buffer.from(encoded, 'base64').toString('utf8');
   return JSON.parse(decoded);
+}
+
+/**
+ * Formats HTTP errors from google-auth-library without leaking credentials or headers.
+ */
+function formatBillingApiError(err) {
+  const status = err?.response?.status ?? err?.code ?? 'UNKNOWN';
+  const data = err?.response?.data;
+  const apiMessage =
+    (typeof data === 'object' && data !== null && (data.error?.message || JSON.stringify(data))) ||
+    (typeof data === 'string' && data) ||
+    err?.message ||
+    String(err);
+  return { status, apiMessage };
 }
 
 /**
@@ -57,10 +71,10 @@ exports.stopBilling = async (cloudEvent) => {
     return;
   }
 
-  const maxCostUsd = Number.parseFloat(process.env.MAX_COST_USD || '2.00');
+  const maxCost = Number.parseFloat(process.env.MAX_COST_USD || '2.00');
   const dryRun = (process.env.DRY_RUN || 'true').toLowerCase() === 'true';
 
-  if (!Number.isFinite(maxCostUsd) || maxCostUsd <= 0) {
+  if (!Number.isFinite(maxCost) || maxCost <= 0) {
     console.error(`[KillSwitch] Invalid MAX_COST_USD value: '${process.env.MAX_COST_USD}'`);
     return;
   }
@@ -84,20 +98,30 @@ exports.stopBilling = async (cloudEvent) => {
       costAmount,
       budgetAmount,
       currencyCode,
-      maxCostUsd,
+      maxCostThreshold: maxCost,
       dryRun,
     }),
   );
 
-  if (!Number.isFinite(costAmount) || costAmount < maxCostUsd) {
+  if (!Number.isFinite(costAmount) || costAmount < maxCost) {
     console.log(
-      `[KillSwitch] Cost (${costAmount} ${currencyCode}) is below threshold (${maxCostUsd} USD). No action taken.`,
+      `[KillSwitch] Cost (${costAmount} ${currencyCode}) is below threshold (${maxCost} ${currencyCode}). No action taken.`,
     );
     return;
   }
 
   const client = await auth.getClient();
-  const billingInfo = await getProjectBillingInfo(client, projectId);
+
+  let billingInfo;
+  try {
+    billingInfo = await getProjectBillingInfo(client, projectId);
+  } catch (err) {
+    const { status, apiMessage } = formatBillingApiError(err);
+    console.error(
+      `[KillSwitch] getProjectBillingInfo failed (HTTP ${status}) for project '${projectId}': ${apiMessage}`,
+    );
+    throw err;
+  }
 
   if (!billingInfo || billingInfo.billingEnabled !== true) {
     console.log(`[KillSwitch] Billing is already disabled for project '${projectId}'.`);
@@ -106,14 +130,22 @@ exports.stopBilling = async (cloudEvent) => {
 
   if (dryRun) {
     console.warn(
-      `[KillSwitch][DRY_RUN=true] Threshold exceeded (${costAmount} >= ${maxCostUsd} USD). Would detach billing from '${projectId}'.`,
+      `[KillSwitch][DRY_RUN=true] Threshold exceeded (${costAmount} >= ${maxCost} ${currencyCode}). Would detach billing from '${projectId}'.`,
     );
     return;
   }
 
   console.warn(
-    `[KillSwitch] Threshold exceeded (${costAmount} >= ${maxCostUsd} USD). Detaching billing account from '${projectId}' NOW.`,
+    `[KillSwitch] Threshold exceeded (${costAmount} >= ${maxCost} ${currencyCode}). Detaching billing account from '${projectId}' NOW.`,
   );
-  await disableProjectBilling(client, projectId);
+  try {
+    await disableProjectBilling(client, projectId);
+  } catch (err) {
+    const { status, apiMessage } = formatBillingApiError(err);
+    console.error(
+      `[KillSwitch] disableProjectBilling failed (HTTP ${status}) for project '${projectId}': ${apiMessage}`,
+    );
+    throw err;
+  }
   console.warn(`[KillSwitch] Billing successfully disabled for project '${projectId}'.`);
 };

@@ -10,8 +10,10 @@ import { crmClient } from './clients/crmClient.js';
 import { eventsClient } from './clients/eventsClient.js';
 import { UpstreamApiError } from './clients/http.js';
 import { identityClient } from './clients/identityClient.js';
+import { telemetryClient } from './clients/telemetryClient.js';
 import { config } from './config.js';
 import { requireAuth } from './middleware/auth.js';
+import { requestIdMiddleware } from './middleware/requestId.js';
 import { authRoutes } from './routes/auth.js';
 import { bookingsRoutes } from './routes/bookings.js';
 import { calendarsRoutes } from './routes/calendars.js';
@@ -19,6 +21,7 @@ import { categoriesRoutes, itemsRoutes } from './routes/catalog.js';
 import { clientsRoutes } from './routes/clients.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { identityRoutes } from './routes/identity.js';
+import { telemetryRoutes } from './routes/telemetry.js';
 
 const app = new Hono();
 
@@ -26,6 +29,7 @@ const allowedOrigins = config.CORS_ORIGIN.split(',')
   .map((o) => o.trim())
   .filter(Boolean);
 
+app.use('*', requestIdMiddleware);
 app.use('*', logger());
 app.use(
   '*',
@@ -38,23 +42,25 @@ app.use(
       return '';
     },
     allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key'],
+    allowHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Request-Id'],
+    exposeHeaders: ['X-Request-Id'],
     credentials: true,
   }),
 );
 
 // Public Health endpoint with upstream microservice & Keycloak checks
 app.get('/health', async (c) => {
-  const [events, crm, identity, catalog, bookings, keycloak] = await Promise.all([
+  const [events, crm, identity, catalog, bookings, telemetry, keycloak] = await Promise.all([
     eventsClient.health(),
     crmClient.health(),
     identityClient.health(),
     catalogClient.health(),
     bookingsClient.health(),
+    telemetryClient.health(),
     checkKeycloakHealth(),
   ]);
 
-  const services = { events, crm, identity, catalog, bookings, keycloak };
+  const services = { events, crm, identity, catalog, bookings, telemetry, keycloak };
   const allHealthy = Object.values(services).every((s) => s.ok);
 
   return c.json({
@@ -79,6 +85,7 @@ app.route('/api/categories', categoriesRoutes);
 app.route('/api/items', itemsRoutes);
 app.route('/api/calendars', calendarsRoutes);
 app.route('/api/identity', identityRoutes);
+app.route('/api/telemetry', telemetryRoutes);
 
 app.notFound((c) =>
   c.json(
@@ -132,7 +139,8 @@ serve(
     console.log(`   EVENTS_API_URL:   ${config.EVENTS_API_URL}`);
     console.log(`   CRM_API_URL:      ${config.CRM_API_URL}`);
     console.log(`   IDENTITY_API_URL: ${config.IDENTITY_API_URL}`);
-    console.log(`   CATALOG_API_URL:  ${config.CATALOG_API_URL}`);
-    console.log(`   BOOKINGS_API_URL: ${config.BOOKINGS_API_URL}`);
+    console.log(`   CATALOG_API_URL:   ${config.CATALOG_API_URL}`);
+    console.log(`   BOOKINGS_API_URL:  ${config.BOOKINGS_API_URL}`);
+    console.log(`   TELEMETRY_API_URL: ${config.TELEMETRY_API_URL}`);
   },
 );

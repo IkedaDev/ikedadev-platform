@@ -1,4 +1,5 @@
 import {
+  Activity,
   CalendarClock,
   LayoutDashboard,
   LogOut,
@@ -9,7 +10,13 @@ import {
 } from 'lucide-react';
 import type { AuthUser, BffHealth } from '../types/api';
 
-export type NavSection = 'dashboard' | 'clients' | 'catalog' | 'bookings' | 'identity';
+export type NavSection =
+  | 'dashboard'
+  | 'clients'
+  | 'catalog'
+  | 'bookings'
+  | 'telemetry'
+  | 'identity';
 
 interface SidebarProps {
   active: NavSection;
@@ -26,6 +33,7 @@ const NAV_ITEMS: Array<{ id: NavSection; label: string; icon: typeof LayoutDashb
   { id: 'clients', label: 'Clientes (CRM)', icon: Users },
   { id: 'catalog', label: 'Catálogo', icon: Package },
   { id: 'bookings', label: 'Agenda y Reservas', icon: CalendarClock },
+  { id: 'telemetry', label: 'Actividad / Telemetría', icon: Activity },
   { id: 'identity', label: 'Identidad y Acceso', icon: ShieldCheck },
 ];
 
