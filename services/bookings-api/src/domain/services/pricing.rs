@@ -86,13 +86,17 @@ pub fn validate_time_range(
     Ok(())
 }
 
-/// Generates a readable booking code such as `BK-20261124-A1B2C3`.
+/// Generates a readable booking code such as `BK-20261124-9F3A1C2B`.
+///
+/// Uses the trailing random entropy hex digits of `id` (critical for UUIDv7,
+/// whose leading 12 hex digits encode the coarse timestamp and would collide
+/// for bookings created within the same ~4.6-hour window).
 #[must_use]
 pub fn generate_booking_code(now: DateTime<Utc>, id: Uuid) -> String {
     let date_part = now.format("%Y%m%d");
     let id_hex = id.simple().to_string();
-    let suffix: String = id_hex.chars().take(6).collect::<String>().to_uppercase();
-    format!("BK-{date_part}-{suffix}")
+    let suffix = &id_hex[id_hex.len().saturating_sub(8)..];
+    format!("BK-{date_part}-{}", suffix.to_ascii_uppercase())
 }
 
 /// Pure integer financial & duration calculator (no floating-point arithmetic).

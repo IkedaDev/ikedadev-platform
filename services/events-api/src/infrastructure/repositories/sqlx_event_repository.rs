@@ -112,9 +112,10 @@ impl EventRepository for SqlxEventRepository {
                        timezone, rrule, status, external_resource_id, metadata,
                        created_at, updated_at, deleted_at
                 FROM events
-                WHERE calendar_id = $1 AND external_resource_id = $2 AND deleted_at IS NULL
+                WHERE tenant_id = $1 AND calendar_id = $2 AND external_resource_id = $3 AND deleted_at IS NULL
                 "#,
             )
+            .bind(tenant_id)
             .bind(event.calendar_id)
             .bind(ext_id)
             .fetch_optional(&mut *tx)
@@ -183,10 +184,11 @@ impl EventRepository for SqlxEventRepository {
                    timezone, rrule, status, external_resource_id, metadata,
                    created_at, updated_at, deleted_at
             FROM events
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(id)
+        .bind(tenant_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to find event: {e}")))?;
@@ -216,15 +218,17 @@ impl EventRepository for SqlxEventRepository {
                    timezone, rrule, status, external_resource_id, metadata,
                    created_at, updated_at, deleted_at
             FROM events
-            WHERE calendar_id = $1
+            WHERE tenant_id = $1
+              AND calendar_id = $2
               AND deleted_at IS NULL
               AND (
-                  (rrule IS NULL AND starts_at < $3 AND ends_at > $2)
-                  OR (rrule IS NOT NULL AND starts_at <= $3)
+                  (rrule IS NULL AND starts_at < $4 AND ends_at > $3)
+                  OR (rrule IS NOT NULL AND starts_at <= $4)
               )
             ORDER BY starts_at ASC
             "#,
         )
+        .bind(tenant_id)
         .bind(calendar_id)
         .bind(range.starts_at)
         .bind(range.ends_at)
@@ -259,11 +263,12 @@ impl EventRepository for SqlxEventRepository {
                    timezone, rrule, status, external_resource_id, metadata,
                    created_at, updated_at, deleted_at
             FROM events
-            WHERE calendar_id = $1 AND deleted_at IS NULL
+            WHERE tenant_id = $1 AND calendar_id = $2 AND deleted_at IS NULL
             ORDER BY starts_at ASC
             LIMIT 100
             "#,
         )
+        .bind(tenant_id)
         .bind(calendar_id)
         .fetch_all(&mut *tx)
         .await
@@ -293,10 +298,11 @@ impl EventRepository for SqlxEventRepository {
             SELECT id, tenant_id, event_id, original_starts_at, is_cancelled,
                    rescheduled_starts_at, rescheduled_ends_at, created_at
             FROM event_exceptions
-            WHERE event_id = $1
+            WHERE tenant_id = $1 AND event_id = $2
             ORDER BY original_starts_at ASC
             "#,
         )
+        .bind(tenant_id)
         .bind(event_id)
         .fetch_all(&mut *tx)
         .await
@@ -370,7 +376,7 @@ impl EventRepository for SqlxEventRepository {
             UPDATE events
             SET title = $1, description = $2, starts_at = $3, ends_at = $4,
                 timezone = $5, rrule = $6, status = $7, metadata = $8, updated_at = NOW()
-            WHERE id = $9 AND deleted_at IS NULL
+            WHERE id = $9 AND tenant_id = $10 AND deleted_at IS NULL
             RETURNING id, tenant_id, calendar_id, title, description, starts_at, ends_at,
                       timezone, rrule, status, external_resource_id, metadata,
                       created_at, updated_at, deleted_at
@@ -385,6 +391,7 @@ impl EventRepository for SqlxEventRepository {
         .bind(status_str)
         .bind(&event.metadata)
         .bind(event.id)
+        .bind(tenant_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to update event: {e}")))?
@@ -404,10 +411,11 @@ impl EventRepository for SqlxEventRepository {
             r#"
             UPDATE events
             SET deleted_at = NOW(), updated_at = NOW()
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(id)
+        .bind(tenant_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to soft delete event: {e}")))?;

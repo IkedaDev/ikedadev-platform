@@ -38,7 +38,7 @@ fn test_telemetry_openapi_spec_generation() {
 #[tokio::test]
 async fn test_telemetry_rls_ingest_batch_search_timeline_and_metrics_on_postgres() {
     let db_url = std::env::var("TELEMETRY_DATABASE_URL").unwrap_or_else(|_| {
-        "postgres://postgres:postgres_password@localhost:5432/telemetry_db?sslmode=disable"
+        "postgres://ikeda_app:ikeda_app_password@localhost:5432/telemetry_db?sslmode=disable"
             .to_string()
     });
 
@@ -59,6 +59,15 @@ async fn test_telemetry_rls_ingest_batch_search_timeline_and_metrics_on_postgres
         (tenant_a, "Tenant A Telemetry Key", &key_a),
         (tenant_b, "Tenant B Telemetry Key", &key_b),
     ] {
+        let mut tx = pool
+            .begin()
+            .await
+            .expect("Failed to begin telemetry key tx");
+        sqlx::query("SELECT set_config('app.current_tenant', $1, true)")
+            .bind(tid.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("Failed to set RLS context");
         sqlx::query(
             r#"
             INSERT INTO api_keys (tenant_id, name, key_prefix, key_hash, scopes, is_active)
@@ -68,9 +77,12 @@ async fn test_telemetry_rls_ingest_batch_search_timeline_and_metrics_on_postgres
         .bind(tid)
         .bind(name)
         .bind(hash_api_key(raw_key))
-        .execute(&pool)
+        .execute(&mut *tx)
         .await
         .expect("Failed to insert telemetry API key");
+        tx.commit()
+            .await
+            .expect("Failed to commit telemetry key tx");
     }
 
     let state = AppState::new(

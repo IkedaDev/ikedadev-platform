@@ -14,19 +14,21 @@ export interface AuthVariables {
   tenantId?: string;
   roles?: string[];
   requestId?: string;
+  authMethod?: 'session' | 'bearer';
 }
 
 /**
  * Production BFF authentication middleware for `/api/*`.
  * - Accepts a valid HttpOnly session cookie (auto-refreshing expired Keycloak access tokens)
  *   OR an explicit `Authorization: Bearer <jwt>` header.
- * - Extracts `actorId`, `tenantId`, and `roles` onto the Hono request context.
+ * - Extracts `actorId`, `tenantId`, `roles`, and `authMethod` onto the Hono request context.
  * - Rejects unauthenticated browser requests with HTTP 401.
  */
 export async function requireAuth(c: Context, next: Next) {
   const headerAuth = c.req.header('Authorization');
   if (headerAuth?.startsWith('Bearer ')) {
     c.set('authorization', headerAuth);
+    c.set('authMethod', 'bearer');
     const claims = decodeJwtPayload(headerAuth.slice('Bearer '.length).trim());
     if (typeof claims.sub === 'string' && claims.sub) {
       c.set('actorId', claims.sub);
@@ -53,6 +55,7 @@ export async function requireAuth(c: Context, next: Next) {
   }
 
   c.set('authorization', `Bearer ${session.accessToken}`);
+  c.set('authMethod', 'session');
   if (session.user.id) {
     c.set('actorId', session.user.id);
   }
@@ -70,6 +73,7 @@ export function getAuthRequestContext(c: Context): RequestContext {
   const actorId = c.get('actorId') as string | undefined;
   const tenantId = c.get('tenantId') as string | undefined;
   const roles = c.get('roles') as string[] | undefined;
+  const authMethod = c.get('authMethod') as 'session' | 'bearer' | undefined;
 
   const ctx: RequestContext = {};
   if (authorization) ctx.authorization = authorization;
@@ -77,5 +81,6 @@ export function getAuthRequestContext(c: Context): RequestContext {
   if (actorId) ctx.actorId = actorId;
   if (tenantId) ctx.tenantId = tenantId;
   if (roles) ctx.roles = roles;
+  if (authMethod) ctx.authMethod = authMethod;
   return ctx;
 }

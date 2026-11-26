@@ -59,6 +59,25 @@ class TelemetryTracker {
     return this.sessionId;
   }
 
+  /**
+   * Clears queued telemetry events and rotates the browser telemetry session ID.
+   * Called on logout or 401 so residual events from Tenant A are never flushed under Tenant B.
+   */
+  public reset(): void {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    this.queue = [];
+    this.flushing = false;
+    try {
+      window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
+    } catch {
+      // ignore storage errors
+    }
+    this.sessionId = generateId();
+  }
+
   public track(
     eventName: string,
     properties?: Record<string, unknown>,

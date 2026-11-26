@@ -24,7 +24,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 4. Connect to PostgreSQL (Neon / Local)
     let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgres://postgres:postgres_password@localhost:5432/events_db?sslmode=disable".to_string()
+        "postgres://ikeda_app:ikeda_app_password@localhost:5432/events_db?sslmode=disable"
+            .to_string()
     });
 
     let db_config = infrastructure::DatabaseConfig {

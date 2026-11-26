@@ -8,6 +8,7 @@ export interface RequestContext {
   actorId?: string;
   tenantId?: string;
   roles?: string[];
+  authMethod?: 'session' | 'bearer';
 }
 
 export class UpstreamApiError extends Error {
@@ -67,8 +68,16 @@ export class ServiceHttpClient {
 
     const headers: Record<string, string> = {
       Accept: 'application/json',
-      ...options?.extraHeaders,
     };
+
+    if (options?.extraHeaders) {
+      for (const [k, v] of Object.entries(options.extraHeaders)) {
+        const lower = k.toLowerCase();
+        // Never allow extraHeaders to smuggle or duplicate auth credentials
+        if (lower === 'x-api-key' || lower === 'authorization') continue;
+        headers[k] = v;
+      }
+    }
 
     if (options?.body !== undefined) {
       headers['Content-Type'] = 'application/json';
@@ -78,9 +87,9 @@ export class ServiceHttpClient {
       headers['X-Request-Id'] = options.ctx.requestId;
     }
 
-    // Strict multi-tenant auth propagation:
+    // Strict multi-tenant auth propagation (mutually exclusive):
     // - Use `X-Api-Key` ONLY when an explicit `apiKeyOverride` is passed (e.g. settings.ts
-    //   with PLATFORM_ADMIN_API_KEY, or CLI seed script).
+    //   with PLATFORM_ADMIN_API_KEY on a verified BFF session, or CLI seed script).
     // - Otherwise, forward ONLY the authenticated user's `Authorization: Bearer <access_token>`
     //   so Rust microservices validate RS256 JWKS and extract tenant_id, user_id, and roles.
     if (options?.apiKeyOverride) {

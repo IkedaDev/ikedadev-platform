@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { bffClient } from './api/bffClient';
+import { bffClient, registerUnauthorizedHandler } from './api/bffClient';
 import { tracker } from './api/tracker';
 import { AppLayout } from './components/AppLayout';
 import { NAV_ITEMS, type NavSection } from './components/Sidebar';
@@ -16,7 +16,7 @@ import { SettingsView } from './views/SettingsView';
 import { TelemetryView } from './views/TelemetryView';
 
 export function App() {
-  const { settings, reloadSettings } = useTheme();
+  const { settings, reloadSettings, clearTenantState } = useTheme();
   const { confirm } = useModal();
   const [section, setSection] = useState<NavSection>('dashboard');
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -26,6 +26,35 @@ export function App() {
   const [healthLoading, setHealthLoading] = useState(false);
 
   const settingsDirtyRef = useRef(false);
+
+  /**
+   * Purges all tenant-scoped in-memory state, visual branding, telemetry queues,
+   * and browser storage (localStorage + sessionStorage) on logout or HTTP 401.
+   */
+  const clearClientSessionState = useCallback(() => {
+    settingsDirtyRef.current = false;
+    setSection('dashboard');
+    setUser(null);
+    tracker.reset();
+    try {
+      window.localStorage.clear();
+    } catch {
+      // ignore storage errors
+    }
+    try {
+      window.sessionStorage.clear();
+    } catch {
+      // ignore storage errors
+    }
+    clearTenantState();
+  }, [clearTenantState]);
+
+  useEffect(() => {
+    return registerUnauthorizedHandler(() => {
+      clearClientSessionState();
+      setAuthError('Tu sesión ha expirado. Inicia sesión nuevamente.');
+    });
+  }, [clearClientSessionState]);
 
   const checkHealth = useCallback(async () => {
     setHealthLoading(true);
@@ -120,13 +149,13 @@ export function App() {
   const handleLogout = async () => {
     try {
       const res = await bffClient.logout();
-      setUser(null);
+      clearClientSessionState();
       if (res.logoutUrl) {
         window.location.href = res.logoutUrl;
         return;
       }
     } catch {
-      setUser(null);
+      clearClientSessionState();
     }
   };
 
@@ -151,6 +180,7 @@ export function App() {
 
   return (
     <AppLayout
+      key={`${user.tenant_id ?? 'no-tenant'}:${user.id}`}
       active={section}
       onSelect={(next) => {
         void handleSelectSection(next);

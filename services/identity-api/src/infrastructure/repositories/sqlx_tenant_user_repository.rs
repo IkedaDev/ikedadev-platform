@@ -104,10 +104,11 @@ impl TenantUserRepository for SqlxTenantUserRepository {
             SELECT id, tenant_id, keycloak_user_id, email, full_name, roles,
                    is_active, created_at, updated_at, deleted_at
             FROM tenant_users
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(id)
+        .bind(tenant_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to find tenant user: {e}")))?;
@@ -127,10 +128,11 @@ impl TenantUserRepository for SqlxTenantUserRepository {
             SELECT id, tenant_id, keycloak_user_id, email, full_name, roles,
                    is_active, created_at, updated_at, deleted_at
             FROM tenant_users
-            WHERE deleted_at IS NULL
+            WHERE tenant_id = $1 AND deleted_at IS NULL
             ORDER BY created_at DESC
             "#,
         )
+        .bind(tenant_id)
         .fetch_all(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to list tenant users: {e}")))?;
@@ -149,10 +151,11 @@ impl TenantUserRepository for SqlxTenantUserRepository {
             r#"
             UPDATE tenant_users
             SET is_active = false, deleted_at = NOW(), updated_at = NOW()
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(id)
+        .bind(tenant_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to soft-delete tenant user: {e}")))?;

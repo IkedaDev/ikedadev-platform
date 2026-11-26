@@ -99,9 +99,11 @@ impl ApiKeyRepository for SqlxApiKeyRepository {
             SELECT id, tenant_id, name, key_prefix, scopes, is_active,
                    expires_at, last_used_at, created_at, revoked_at
             FROM api_keys
+            WHERE tenant_id = $1
             ORDER BY created_at DESC
             "#,
         )
+        .bind(tenant_id)
         .fetch_all(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to list API keys: {e}")))?;
@@ -120,10 +122,11 @@ impl ApiKeyRepository for SqlxApiKeyRepository {
             r#"
             UPDATE api_keys
             SET is_active = false, revoked_at = NOW()
-            WHERE id = $1 AND revoked_at IS NULL
+            WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL
             "#,
         )
         .bind(id)
+        .bind(tenant_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to revoke API key: {e}")))?;

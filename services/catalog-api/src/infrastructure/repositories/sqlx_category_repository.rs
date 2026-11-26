@@ -108,10 +108,11 @@ impl CategoryRepository for SqlxCategoryRepository {
             SELECT id, tenant_id, parent_id, name, slug, description,
                    display_order, is_active, created_at, updated_at, deleted_at
             FROM categories
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(id)
+        .bind(tenant_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to find category: {e}")))?;
@@ -135,10 +136,11 @@ impl CategoryRepository for SqlxCategoryRepository {
             SELECT id, tenant_id, parent_id, name, slug, description,
                    display_order, is_active, created_at, updated_at, deleted_at
             FROM categories
-            WHERE slug = $1 AND deleted_at IS NULL
+            WHERE slug = $1 AND tenant_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(slug)
+        .bind(tenant_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to find category by slug: {e}")))?;
@@ -158,10 +160,11 @@ impl CategoryRepository for SqlxCategoryRepository {
             SELECT id, tenant_id, parent_id, name, slug, description,
                    display_order, is_active, created_at, updated_at, deleted_at
             FROM categories
-            WHERE deleted_at IS NULL
+            WHERE tenant_id = $1 AND deleted_at IS NULL
             ORDER BY display_order ASC, name ASC
             "#,
         )
+        .bind(tenant_id)
         .fetch_all(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to list categories: {e}")))?;
@@ -181,7 +184,7 @@ impl CategoryRepository for SqlxCategoryRepository {
             UPDATE categories
             SET parent_id = $1, name = $2, slug = $3, description = $4,
                 display_order = $5, is_active = $6, updated_at = NOW()
-            WHERE id = $7 AND deleted_at IS NULL
+            WHERE id = $7 AND tenant_id = $8 AND deleted_at IS NULL
             RETURNING id, tenant_id, parent_id, name, slug, description,
                       display_order, is_active, created_at, updated_at, deleted_at
             "#,
@@ -193,6 +196,7 @@ impl CategoryRepository for SqlxCategoryRepository {
         .bind(category.display_order)
         .bind(category.is_active)
         .bind(category.id)
+        .bind(tenant_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| map_category_write_err("Failed to update category", e))?
@@ -212,10 +216,11 @@ impl CategoryRepository for SqlxCategoryRepository {
             r#"
             UPDATE categories
             SET deleted_at = NOW(), updated_at = NOW()
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(id)
+        .bind(tenant_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to soft-delete category: {e}")))?;

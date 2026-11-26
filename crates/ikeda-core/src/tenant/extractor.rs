@@ -23,6 +23,16 @@ where
     type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let has_api_key = parts.headers.contains_key(HEADER_API_KEY);
+        let has_authorization = parts.headers.contains_key(header::AUTHORIZATION);
+
+        // 0. Reject ambiguous/conflicting credentials (never mix M2M API Key + User Bearer JWT)
+        if has_api_key && has_authorization {
+            return Err(AppError::BadRequest(
+                "Conflicting authentication credentials: provide either 'X-Api-Key' or 'Authorization', not both".to_string(),
+            ));
+        }
+
         // 1. Strict API Key evaluation via ApiKeyValidator port
         if let Some(api_key_header) = parts.headers.get(HEADER_API_KEY) {
             let raw_key = api_key_header.to_str().map_err(|_| {
@@ -34,6 +44,11 @@ where
 
             let auth = validator.validate_key_hash(&key_hash).await?;
             if let Some(auth_key) = auth {
+                if auth_key.tenant_id.is_nil() {
+                    return Err(AppError::Unauthorized(
+                        "API key is bound to an invalid nil tenant ID".to_string(),
+                    ));
+                }
                 return Ok(Self {
                     tenant_id: auth_key.tenant_id,
                     user_id: None,

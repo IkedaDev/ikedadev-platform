@@ -50,12 +50,70 @@ apply_migrations() {
     done
 }
 
+echo ">>> [init-databases] Creating dedicated NOBYPASSRLS application role (ikeda_app)..."
+APP_DB_USER="${IKEDA_APP_USER:-ikeda_app}"
+APP_DB_PASSWORD="${IKEDA_APP_PASSWORD:-ikeda_app_password}"
+
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    DO \$\$
+    BEGIN
+        IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '${APP_DB_USER}') THEN
+            EXECUTE format(
+                'CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS',
+                '${APP_DB_USER}',
+                '${APP_DB_PASSWORD}'
+            );
+        ELSE
+            EXECUTE format(
+                'ALTER ROLE %I WITH LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS',
+                '${APP_DB_USER}',
+                '${APP_DB_PASSWORD}'
+            );
+        END IF;
+    END
+    \$\$;
+EOSQL
+
+grant_app_privileges() {
+    db_name="$1"
+    echo ">>> [init-databases] Granting least-privilege NOBYPASSRLS access on $db_name to $APP_DB_USER..."
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$db_name" <<-EOSQL
+        GRANT CONNECT ON DATABASE "${db_name}" TO "${APP_DB_USER}";
+        GRANT USAGE ON SCHEMA public TO "${APP_DB_USER}";
+        GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO "${APP_DB_USER}";
+        GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "${APP_DB_USER}";
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public
+            GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "${APP_DB_USER}";
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public
+            GRANT USAGE, SELECT ON SEQUENCES TO "${APP_DB_USER}";
+        DO \$\$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM pg_proc p
+                JOIN pg_namespace n ON n.oid = p.pronamespace
+                WHERE n.nspname = 'public' AND p.proname = 'authenticate_api_key'
+            ) THEN
+                EXECUTE 'GRANT EXECUTE ON FUNCTION public.authenticate_api_key(VARCHAR) TO "${APP_DB_USER}"';
+            END IF;
+        END
+        \$\$;
+EOSQL
+}
+
 apply_migrations "events_db"    "/migrations/events"
 apply_migrations "crm_db"       "/migrations/crm"
 apply_migrations "identity_db"  "/migrations/identity"
 apply_migrations "catalog_db"   "/migrations/catalog"
 apply_migrations "bookings_db"  "/migrations/bookings"
 apply_migrations "telemetry_db" "/migrations/telemetry"
+
+grant_app_privileges "events_db"
+grant_app_privileges "crm_db"
+grant_app_privileges "identity_db"
+grant_app_privileges "catalog_db"
+grant_app_privileges "bookings_db"
+grant_app_privileges "telemetry_db"
 
 # Seed a deterministic local development tenant + API key in identity_db
 DEV_TENANT_ID="11111111-1111-4111-8111-111111111111"

@@ -33,7 +33,7 @@ fn test_bookings_openapi_spec_generation() {
 #[tokio::test]
 async fn test_bookings_rls_idempotency_transitions_criteria_and_soft_delete_on_postgres() {
     let db_url = std::env::var("BOOKINGS_DATABASE_URL").unwrap_or_else(|_| {
-        "postgres://postgres:postgres_password@localhost:5432/bookings_db?sslmode=disable"
+        "postgres://ikeda_app:ikeda_app_password@localhost:5432/bookings_db?sslmode=disable"
             .to_string()
     });
 
@@ -54,6 +54,12 @@ async fn test_bookings_rls_idempotency_transitions_criteria_and_soft_delete_on_p
         (tenant_a, "Tenant A Bookings Key", &key_a),
         (tenant_b, "Tenant B Bookings Key", &key_b),
     ] {
+        let mut tx = pool.begin().await.expect("Failed to begin bookings key tx");
+        sqlx::query("SELECT set_config('app.current_tenant', $1, true)")
+            .bind(tid.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("Failed to set RLS context");
         sqlx::query(
             r#"
             INSERT INTO api_keys (tenant_id, name, key_prefix, key_hash, scopes, is_active)
@@ -63,9 +69,10 @@ async fn test_bookings_rls_idempotency_transitions_criteria_and_soft_delete_on_p
         .bind(tid)
         .bind(name)
         .bind(hash_api_key(raw_key))
-        .execute(&pool)
+        .execute(&mut *tx)
         .await
         .expect("Failed to insert bookings API key");
+        tx.commit().await.expect("Failed to commit bookings key tx");
     }
 
     let state = AppState::new(

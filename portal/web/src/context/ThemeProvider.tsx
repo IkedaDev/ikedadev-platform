@@ -54,6 +54,7 @@ export interface ThemeContextValue {
   toggleTheme: () => void;
   updateSettings: (patch: TenantSettingsUpdate) => Promise<TenantSettings>;
   resetToKropy: () => void;
+  clearTenantState: () => void;
   applyPreview: (partialBranding: Partial<TenantBranding> | null) => void;
   reloadSettings: () => Promise<void>;
 }
@@ -304,6 +305,25 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  /**
+   * Completely wipes all tenant-scoped branding, settings, metadata, and theme overrides.
+   * Called on logout and HTTP 401 so the next user in the same browser starts with clean defaults.
+   */
+  const clearTenantState = useCallback(() => {
+    const defaults = mergeSettings();
+    setSettings(defaults);
+    setPreviewBranding(null);
+    setTenantMeta(null);
+    setCanEditSettings(false);
+    setLocalThemeOverride(null);
+    try {
+      window.localStorage.removeItem(LOCAL_THEME_KEY);
+    } catch {
+      // ignore
+    }
+    applyCssVariables(defaults.branding, 'light');
+  }, []);
+
   const updateSettings = useCallback(
     async (patch: TenantSettingsUpdate): Promise<TenantSettings> => {
       const res = await bffClient.updateSettings(patch);
@@ -342,6 +362,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       toggleTheme,
       updateSettings,
       resetToKropy,
+      clearTenantState,
       applyPreview,
       reloadSettings,
     }),
@@ -355,6 +376,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       toggleTheme,
       updateSettings,
       resetToKropy,
+      clearTenantState,
       applyPreview,
       reloadSettings,
     ],

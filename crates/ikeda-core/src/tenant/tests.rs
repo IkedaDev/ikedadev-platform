@@ -589,3 +589,82 @@ async fn test_cached_api_key_validator_rejects_invalid_keys_without_caching() {
     assert!(res2.is_none());
     assert_eq!(calls.load(Ordering::SeqCst), 2);
 }
+
+#[tokio::test]
+async fn test_extractor_rejects_conflicting_api_key_and_bearer_headers() {
+    let mut mock = MockApiKeyValidator::new();
+    let tenant_id = Uuid::new_v4();
+    let raw_key = "ik_live_conflict_test";
+    mock.add_key(raw_key, tenant_id, vec!["*".to_string()]);
+    let state = TestAppState::new(Arc::new(mock));
+
+    let req = Request::builder()
+        .header(HEADER_API_KEY, raw_key)
+        .header(header::AUTHORIZATION, "Bearer some.jwt.token")
+        .body(Body::empty())
+        .expect("request build failed");
+
+    let (mut parts, _) = req.into_parts();
+    let err = TenantContext::from_request_parts(&mut parts, &state)
+        .await
+        .expect_err("must reject conflicting X-Api-Key and Authorization headers");
+
+    match err {
+        AppError::BadRequest(msg) => {
+            assert!(msg.contains("Conflicting authentication credentials"));
+        }
+        other => panic!("expected BadRequest, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn test_extractor_rejects_nil_tenant_id_from_api_key() {
+    let mut mock = MockApiKeyValidator::new();
+    let raw_key = "ik_live_nil_tenant";
+    mock.add_key(raw_key, Uuid::nil(), vec!["*".to_string()]);
+    let state = TestAppState::new(Arc::new(mock));
+
+    let req = Request::builder()
+        .header(HEADER_API_KEY, raw_key)
+        .body(Body::empty())
+        .expect("request build failed");
+
+    let (mut parts, _) = req.into_parts();
+    let err = TenantContext::from_request_parts(&mut parts, &state)
+        .await
+        .expect_err("must reject API key bound to nil tenant_id");
+
+    match err {
+        AppError::Unauthorized(msg) => {
+            assert!(msg.contains("nil tenant ID"));
+        }
+        other => panic!("expected Unauthorized, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn test_jwt_validator_rejects_nil_tenant_id() {
+    let keypair = TestRsaKeyPair::generate("nil-tenant-kid");
+    let config = JwksConfig::new("", "https://auth.ikedadev.com/realms/ikeda");
+    let validator = JwksJwtValidator::with_static_jwks(config, keypair.jwk_set.clone())
+        .expect("validator init failed");
+
+    let token = keypair.sign(&json!({
+        "iss": "https://auth.ikedadev.com/realms/ikeda",
+        "sub": Uuid::new_v4().to_string(),
+        "tenant_id": Uuid::nil().to_string(),
+        "exp": (Utc::now() + chrono::Duration::minutes(10)).timestamp(),
+    }));
+
+    let err = validator
+        .validate_token(&token)
+        .await
+        .expect_err("must reject JWT with nil tenant_id");
+
+    match err {
+        AppError::Unauthorized(msg) => {
+            assert!(msg.contains("nil UUID"));
+        }
+        other => panic!("expected Unauthorized, got {other:?}"),
+    }
+}

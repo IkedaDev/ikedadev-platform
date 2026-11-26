@@ -149,6 +149,7 @@ fn extract_type_columns(
 
 async fn hydrate_items(
     tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
     rows: Vec<CatalogItemRow>,
 ) -> Result<Vec<CatalogItem>, AppError> {
     if rows.is_empty() {
@@ -157,16 +158,17 @@ async fn hydrate_items(
 
     let item_ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
 
-    // Batch-load active variants in one query
+    // Batch-load active variants in one query (defense-in-depth: explicit tenant_id)
     let variant_rows = sqlx::query_as::<_, VariantRow>(
         r#"
         SELECT id, tenant_id, item_id, name, sku, price_override, duration_override,
                is_active, created_at, updated_at, deleted_at
         FROM catalog_item_variants
-        WHERE item_id = ANY($1) AND deleted_at IS NULL
+        WHERE tenant_id = $1 AND item_id = ANY($2) AND deleted_at IS NULL
         ORDER BY created_at ASC
         "#,
     )
+    .bind(tenant_id)
     .bind(&item_ids)
     .fetch_all(&mut **tx)
     .await
@@ -190,9 +192,10 @@ async fn hydrate_items(
             r#"
             SELECT bundle_id, item_id, quantity
             FROM bundle_items
-            WHERE bundle_id = ANY($1)
+            WHERE tenant_id = $1 AND bundle_id = ANY($2)
             "#,
         )
+        .bind(tenant_id)
         .bind(&bundle_ids)
         .fetch_all(&mut **tx)
         .await
@@ -330,16 +333,20 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
                    duration_minutes, buffer_minutes, unit_of_measure, track_inventory,
                    is_active, metadata, created_at, updated_at, deleted_at
             FROM catalog_items
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(id)
+        .bind(tenant_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to find catalog item: {e}")))?;
 
         let hydrated = match row {
-            Some(r) => hydrate_items(&mut tx, vec![r]).await?.into_iter().next(),
+            Some(r) => hydrate_items(&mut tx, tenant_id, vec![r])
+                .await?
+                .into_iter()
+                .next(),
             None => None,
         };
 
@@ -364,16 +371,20 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
                    duration_minutes, buffer_minutes, unit_of_measure, track_inventory,
                    is_active, metadata, created_at, updated_at, deleted_at
             FROM catalog_items
-            WHERE sku = $1 AND deleted_at IS NULL
+            WHERE sku = $1 AND tenant_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(sku)
+        .bind(tenant_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to find catalog item by SKU: {e}")))?;
 
         let hydrated = match row {
-            Some(r) => hydrate_items(&mut tx, vec![r]).await?.into_iter().next(),
+            Some(r) => hydrate_items(&mut tx, tenant_id, vec![r])
+                .await?
+                .into_iter()
+                .next(),
             None => None,
         };
 
@@ -402,15 +413,16 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
                    duration_minutes, buffer_minutes, unit_of_measure, track_inventory,
                    is_active, metadata, created_at, updated_at, deleted_at
             FROM catalog_items
-            WHERE id = ANY($1) AND deleted_at IS NULL
+            WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL
             "#,
         )
+        .bind(tenant_id)
         .bind(ids)
         .fetch_all(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to batch-load catalog items: {e}")))?;
 
-        let items = hydrate_items(&mut tx, rows).await?;
+        let items = hydrate_items(&mut tx, tenant_id, rows).await?;
 
         tx.commit()
             .await
@@ -427,7 +439,9 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
         let mut tx = begin_tenant_tx(&self.pool, tenant_id).await?;
 
         let mut count_qb: QueryBuilder<'_, Postgres> =
-            QueryBuilder::new("SELECT COUNT(*) FROM catalog_items WHERE deleted_at IS NULL");
+            QueryBuilder::new("SELECT COUNT(*) FROM catalog_items WHERE tenant_id = ");
+        count_qb.push_bind(tenant_id);
+        count_qb.push(" AND deleted_at IS NULL");
         if let Some(ref filter) = criteria.filter {
             count_qb.push(" AND ");
             append_filter_group(&mut count_qb, filter)?;
@@ -444,8 +458,10 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
              base_price, currency, tax_rate_bps, tax_included, \
              duration_minutes, buffer_minutes, unit_of_measure, track_inventory, \
              is_active, metadata, created_at, updated_at, deleted_at \
-             FROM catalog_items WHERE deleted_at IS NULL",
+             FROM catalog_items WHERE tenant_id = ",
         );
+        data_qb.push_bind(tenant_id);
+        data_qb.push(" AND deleted_at IS NULL");
         if let Some(ref filter) = criteria.filter {
             data_qb.push(" AND ");
             append_filter_group(&mut data_qb, filter)?;
@@ -467,7 +483,7 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
             .await
             .map_err(|e| AppError::DatabaseError(format!("Failed to search catalog items: {e}")))?;
 
-        let items = hydrate_items(&mut tx, rows).await?;
+        let items = hydrate_items(&mut tx, tenant_id, rows).await?;
 
         tx.commit()
             .await
@@ -491,7 +507,7 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
                 base_price = $6, currency = $7, tax_rate_bps = $8, tax_included = $9,
                 duration_minutes = $10, buffer_minutes = $11, unit_of_measure = $12,
                 track_inventory = $13, is_active = $14, metadata = $15, updated_at = NOW()
-            WHERE id = $16 AND deleted_at IS NULL
+            WHERE id = $16 AND tenant_id = $17 AND deleted_at IS NULL
             RETURNING id, tenant_id, category_id, item_type, sku, name, description,
                       base_price, currency, tax_rate_bps, tax_included,
                       duration_minutes, buffer_minutes, unit_of_measure, track_inventory,
@@ -514,6 +530,7 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
         .bind(item.is_active)
         .bind(&item.metadata)
         .bind(item.id)
+        .bind(tenant_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| map_item_write_err("Failed to update catalog item", e))?
@@ -522,7 +539,8 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
         })?;
 
         if let ItemDetails::Bundle { ref items } = item.details {
-            sqlx::query("DELETE FROM bundle_items WHERE bundle_id = $1")
+            sqlx::query("DELETE FROM bundle_items WHERE tenant_id = $1 AND bundle_id = $2")
+                .bind(tenant_id)
                 .bind(item.id)
                 .execute(&mut *tx)
                 .await
@@ -547,7 +565,7 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
             }
         }
 
-        let hydrated = hydrate_items(&mut tx, vec![row])
+        let hydrated = hydrate_items(&mut tx, tenant_id, vec![row])
             .await?
             .into_iter()
             .next()
@@ -569,10 +587,11 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
             r#"
             UPDATE catalog_items
             SET deleted_at = NOW(), updated_at = NOW()
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(id)
+        .bind(tenant_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to soft-delete catalog item: {e}")))?;
@@ -637,11 +656,12 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
             SELECT id, tenant_id, item_id, name, sku, price_override, duration_override,
                    is_active, created_at, updated_at, deleted_at
             FROM catalog_item_variants
-            WHERE id = $1 AND item_id = $2 AND deleted_at IS NULL
+            WHERE id = $1 AND item_id = $2 AND tenant_id = $3 AND deleted_at IS NULL
             "#,
         )
         .bind(variant_id)
         .bind(item_id)
+        .bind(tenant_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to find variant: {e}")))?;
@@ -665,7 +685,7 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
             UPDATE catalog_item_variants
             SET name = $1, sku = $2, price_override = $3, duration_override = $4,
                 is_active = $5, updated_at = NOW()
-            WHERE id = $6 AND item_id = $7 AND deleted_at IS NULL
+            WHERE id = $6 AND item_id = $7 AND tenant_id = $8 AND deleted_at IS NULL
             RETURNING id, tenant_id, item_id, name, sku, price_override, duration_override,
                       is_active, created_at, updated_at, deleted_at
             "#,
@@ -677,6 +697,7 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
         .bind(variant.is_active)
         .bind(variant.id)
         .bind(variant.item_id)
+        .bind(tenant_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| map_item_write_err("Failed to update variant", e))?
@@ -701,11 +722,12 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
             r#"
             UPDATE catalog_item_variants
             SET deleted_at = NOW(), updated_at = NOW()
-            WHERE id = $1 AND item_id = $2 AND deleted_at IS NULL
+            WHERE id = $1 AND item_id = $2 AND tenant_id = $3 AND deleted_at IS NULL
             "#,
         )
         .bind(variant_id)
         .bind(item_id)
+        .bind(tenant_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to soft-delete variant: {e}")))?;

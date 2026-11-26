@@ -20,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!(%addr, "Initializing IkedaDev Bookings API...");
 
     let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgres://postgres:postgres_password@localhost:5432/bookings_db?sslmode=disable"
+        "postgres://ikeda_app:ikeda_app_password@localhost:5432/bookings_db?sslmode=disable"
             .to_string()
     });
 

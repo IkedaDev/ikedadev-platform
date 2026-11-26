@@ -250,7 +250,8 @@ impl EventRepository for SqlxEventRepository {
         let mut tx = begin_tenant_tx(&self.pool, tenant_id).await?;
 
         let mut count_qb: QueryBuilder<'_, Postgres> =
-            QueryBuilder::new("SELECT COUNT(*)::bigint FROM telemetry_events WHERE 1=1");
+            QueryBuilder::new("SELECT COUNT(*)::bigint FROM telemetry_events WHERE tenant_id = ");
+        count_qb.push_bind(tenant_id);
         if let Some(ref filter) = criteria.filter {
             count_qb.push(" AND ");
             append_filter_group(&mut count_qb, filter)?;
@@ -274,8 +275,9 @@ impl EventRepository for SqlxEventRepository {
              client_id, actor_id, anonymous_id, session_id, \
              resource_type, resource_id, request_id, \
              properties, context, occurred_at, received_at \
-             FROM telemetry_events WHERE 1=1",
+             FROM telemetry_events WHERE tenant_id = ",
         );
+        data_qb.push_bind(tenant_id);
         if let Some(ref filter) = criteria.filter {
             data_qb.push(" AND ");
             append_filter_group(&mut data_qb, filter)?;
@@ -328,12 +330,14 @@ impl EventRepository for SqlxEventRepository {
                 COUNT(DISTINCT client_id)::bigint AS unique_clients,
                 COUNT(DISTINCT session_id)::bigint AS unique_sessions
             FROM telemetry_events
-            WHERE occurred_at >= $1
-              AND occurred_at <= $2
-              AND ($3::varchar IS NULL OR kind = $3)
-              AND ($4::varchar IS NULL OR source = $4)
+            WHERE tenant_id = $1
+              AND occurred_at >= $2
+              AND occurred_at <= $3
+              AND ($4::varchar IS NULL OR kind = $4)
+              AND ($5::varchar IS NULL OR source = $5)
             "#,
         )
+        .bind(tenant_id)
         .bind(query.from)
         .bind(query.to)
         .bind(kind_str)
@@ -348,15 +352,17 @@ impl EventRepository for SqlxEventRepository {
             r#"
             SELECT event_name, COUNT(*)::bigint AS count
             FROM telemetry_events
-            WHERE occurred_at >= $1
-              AND occurred_at <= $2
-              AND ($3::varchar IS NULL OR kind = $3)
-              AND ($4::varchar IS NULL OR source = $4)
+            WHERE tenant_id = $1
+              AND occurred_at >= $2
+              AND occurred_at <= $3
+              AND ($4::varchar IS NULL OR kind = $4)
+              AND ($5::varchar IS NULL OR source = $5)
             GROUP BY event_name
             ORDER BY count DESC, event_name ASC
-            LIMIT $5
+            LIMIT $6
             "#,
         )
+        .bind(tenant_id)
         .bind(query.from)
         .bind(query.to)
         .bind(kind_str)
@@ -402,10 +408,12 @@ impl EventRepository for SqlxEventRepository {
             r#"
             SELECT COUNT(*)::bigint
             FROM telemetry_events
-            WHERE client_id = $1
-              AND ($2::varchar IS NULL OR kind = $2)
+            WHERE tenant_id = $1
+              AND client_id = $2
+              AND ($3::varchar IS NULL OR kind = $3)
             "#,
         )
+        .bind(tenant_id)
         .bind(query.client_id)
         .bind(kind_str)
         .fetch_one(&mut *tx)
@@ -425,12 +433,14 @@ impl EventRepository for SqlxEventRepository {
                    resource_type, resource_id, request_id,
                    properties, context, occurred_at, received_at
             FROM telemetry_events
-            WHERE client_id = $1
-              AND ($2::varchar IS NULL OR kind = $2)
+            WHERE tenant_id = $1
+              AND client_id = $2
+              AND ($3::varchar IS NULL OR kind = $3)
             ORDER BY occurred_at DESC, received_at DESC
-            LIMIT $3 OFFSET $4
+            LIMIT $4 OFFSET $5
             "#,
         )
+        .bind(tenant_id)
         .bind(query.client_id)
         .bind(kind_str)
         .bind(limit_i64)

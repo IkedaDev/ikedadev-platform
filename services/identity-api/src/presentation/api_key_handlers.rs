@@ -28,6 +28,26 @@ fn require_tenant_or_platform_admin(ctx: &TenantContext) -> Result<(), AppError>
     }
 }
 
+fn reject_privileged_scope_escalation(
+    ctx: &TenantContext,
+    scopes: &[String],
+) -> Result<(), AppError> {
+    if ctx.has_scope(SCOPE_PLATFORM_ADMIN) {
+        return Ok(());
+    }
+    let escalates = scopes.iter().any(|s| {
+        let trimmed = s.trim();
+        trimmed == SCOPE_PLATFORM_ADMIN || trimmed == "*"
+    });
+    if escalates {
+        return Err(AppError::Forbidden(
+            "Cannot mint an API key with 'platform:admin' or wildcard scopes without 'platform:admin' scope"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Mints a new API key for the authenticated tenant, returning the plaintext secret ONCE.
 #[utoipa::path(
     post,
@@ -47,6 +67,7 @@ pub async fn create_api_key(
     Json(cmd): Json<CreateApiKeyCommand>,
 ) -> Result<impl IntoResponse, AppError> {
     require_tenant_or_platform_admin(&ctx)?;
+    reject_privileged_scope_escalation(&ctx, &cmd.scopes)?;
     let use_case = CreateApiKeyUseCase::new(state.api_key_repo.clone());
     let created = use_case.execute(ctx.tenant_id, cmd).await?;
     Ok((

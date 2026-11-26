@@ -1,4 +1,6 @@
+use super::api_key_handlers::SCOPE_TENANT_ADMIN;
 use super::state::AppState;
+use super::tenant_handlers::SCOPE_PLATFORM_ADMIN;
 use crate::application::use_cases::{
     CreateTenantUserCommand, CreateTenantUserUseCase, DeleteTenantUserUseCase,
     ListTenantUsersUseCase,
@@ -15,6 +17,36 @@ use ikeda_core::response::ApiResponse;
 use ikeda_core::tenant::TenantContext;
 use uuid::Uuid;
 
+fn require_tenant_or_platform_admin(ctx: &TenantContext) -> Result<(), AppError> {
+    if ctx.has_scope(SCOPE_TENANT_ADMIN) || ctx.has_scope(SCOPE_PLATFORM_ADMIN) {
+        Ok(())
+    } else {
+        Err(AppError::Forbidden(
+            "Missing required scope: 'tenant:admin' or 'platform:admin'".to_string(),
+        ))
+    }
+}
+
+fn reject_privileged_role_escalation(
+    ctx: &TenantContext,
+    roles: &[String],
+) -> Result<(), AppError> {
+    if ctx.has_scope(SCOPE_PLATFORM_ADMIN) {
+        return Ok(());
+    }
+    let escalates = roles.iter().any(|r| {
+        let trimmed = r.trim();
+        trimmed == SCOPE_PLATFORM_ADMIN || trimmed == "*"
+    });
+    if escalates {
+        return Err(AppError::Forbidden(
+            "Cannot assign 'platform:admin' or wildcard roles without 'platform:admin' scope"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Provisions a new user in Keycloak (with `tenant_id` attribute) and persists them in `tenant_users`.
 #[utoipa::path(
     post,
@@ -23,6 +55,7 @@ use uuid::Uuid;
     request_body = CreateTenantUserCommand,
     responses(
         (status = 201, description = "User provisioned in Keycloak and tenant_users", body = ApiResponse<TenantUser>),
+        (status = 403, description = "Forbidden: requires tenant:admin or platform:admin", body = ApiResponse<serde_json::Value>),
         (status = 409, description = "Conflict: email already exists", body = ApiResponse<serde_json::Value>),
         (status = 400, description = "Invalid user payload", body = ApiResponse<serde_json::Value>),
         (status = 401, description = "Unauthorized", body = ApiResponse<serde_json::Value>)
@@ -33,6 +66,8 @@ pub async fn create_user(
     ctx: TenantContext,
     Json(cmd): Json<CreateTenantUserCommand>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_tenant_or_platform_admin(&ctx)?;
+    reject_privileged_role_escalation(&ctx, &cmd.roles)?;
     let use_case = CreateTenantUserUseCase::new(state.user_repo.clone(), state.idp.clone());
     let user = use_case.execute(ctx.tenant_id, cmd).await?;
     Ok((
@@ -70,6 +105,7 @@ pub async fn list_users(
     ),
     responses(
         (status = 200, description = "User disabled in Keycloak and soft-deleted", body = ApiResponse<serde_json::Value>),
+        (status = 403, description = "Forbidden: requires tenant:admin or platform:admin", body = ApiResponse<serde_json::Value>),
         (status = 404, description = "User not found", body = ApiResponse<serde_json::Value>),
         (status = 401, description = "Unauthorized", body = ApiResponse<serde_json::Value>)
     )
@@ -79,6 +115,7 @@ pub async fn delete_user(
     ctx: TenantContext,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_tenant_or_platform_admin(&ctx)?;
     let use_case = DeleteTenantUserUseCase::new(state.user_repo.clone(), state.idp.clone());
     use_case.execute(ctx.tenant_id, id).await?;
     Ok(Json(ApiResponse::message(

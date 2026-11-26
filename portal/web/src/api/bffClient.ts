@@ -41,14 +41,25 @@ export class BffApiError extends Error {
 }
 
 export type GlobalErrorNotifier = (error: BffApiError) => void;
+export type UnauthorizedHandler = () => void;
 
 let globalErrorNotifier: GlobalErrorNotifier | null = null;
+let unauthorizedHandler: UnauthorizedHandler | null = null;
 
 export function registerGlobalErrorNotifier(notifier: GlobalErrorNotifier | null): () => void {
   globalErrorNotifier = notifier;
   return () => {
     if (globalErrorNotifier === notifier) {
       globalErrorNotifier = null;
+    }
+  };
+}
+
+export function registerUnauthorizedHandler(handler: UnauthorizedHandler | null): () => void {
+  unauthorizedHandler = handler;
+  return () => {
+    if (unauthorizedHandler === handler) {
+      unauthorizedHandler = null;
     }
   };
 }
@@ -127,6 +138,9 @@ async function request<T>(
       typeof data?.code === 'string' ? data.code : undefined,
       data?.details ?? data?.errors,
     );
+    if (res.status === 401 && path.startsWith('/api/') && unauthorizedHandler) {
+      unauthorizedHandler();
+    }
     notifyIfHandledStatus(apiErr, options?.silent);
     throw apiErr;
   }

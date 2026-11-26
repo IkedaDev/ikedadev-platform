@@ -89,10 +89,11 @@ impl CalendarRepository for SqlxCalendarRepository {
             r#"
             SELECT id, tenant_id, name, timezone, allow_overlaps, working_hours, created_at, updated_at, deleted_at
             FROM calendars
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(id)
+        .bind(tenant_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to find calendar: {e}")))?;
@@ -111,10 +112,11 @@ impl CalendarRepository for SqlxCalendarRepository {
             r#"
             SELECT id, tenant_id, name, timezone, allow_overlaps, working_hours, created_at, updated_at, deleted_at
             FROM calendars
-            WHERE deleted_at IS NULL
+            WHERE tenant_id = $1 AND deleted_at IS NULL
             ORDER BY created_at ASC
             "#,
         )
+        .bind(tenant_id)
         .fetch_all(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to list calendars: {e}")))?;
@@ -133,7 +135,7 @@ impl CalendarRepository for SqlxCalendarRepository {
             r#"
             UPDATE calendars
             SET name = $1, timezone = $2, allow_overlaps = $3, working_hours = $4, updated_at = NOW()
-            WHERE id = $5 AND deleted_at IS NULL
+            WHERE id = $5 AND tenant_id = $6 AND deleted_at IS NULL
             RETURNING id, tenant_id, name, timezone, allow_overlaps, working_hours, created_at, updated_at, deleted_at
             "#,
         )
@@ -142,6 +144,7 @@ impl CalendarRepository for SqlxCalendarRepository {
         .bind(calendar.allow_overlaps)
         .bind(&calendar.working_hours)
         .bind(calendar.id)
+        .bind(tenant_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to update calendar: {e}")))?
@@ -161,10 +164,11 @@ impl CalendarRepository for SqlxCalendarRepository {
             r#"
             UPDATE calendars
             SET deleted_at = NOW(), updated_at = NOW()
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(id)
+        .bind(tenant_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to delete calendar: {e}")))?;

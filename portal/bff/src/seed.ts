@@ -305,7 +305,36 @@ async function ensureKeycloakUser(
       console.log(`  ✓ Usuario Keycloak creado: ${spec.email} (${user.id})`);
     }
   } else {
-    console.log(`  ↺ Usuario Keycloak existente: ${spec.email} (${user.id})`);
+    const currentTenantAttr = user.attributes?.tenant_id?.[0];
+    if (currentTenantAttr !== spec.tenantId) {
+      const updateRes = await kcAdminFetch(adminToken, `/users/${user.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          username: user.username ?? spec.email,
+          email: user.email ?? spec.email,
+          emailVerified: true,
+          enabled: true,
+          firstName: spec.firstName,
+          lastName: spec.lastName,
+          attributes: {
+            ...(user.attributes ?? {}),
+            tenant_id: [spec.tenantId],
+          },
+        }),
+      });
+      if (updateRes.ok) {
+        console.log(
+          `  ✓ Atributo tenant_id sincronizado en Keycloak para ${spec.email} -> ${spec.tenantId}`,
+        );
+      } else {
+        const errText = await updateRes.text().catch(() => '');
+        console.warn(
+          `  ⚠ No se pudo sincronizar tenant_id para ${spec.email} (${updateRes.status}): ${errText}`,
+        );
+      }
+    } else {
+      console.log(`  ↺ Usuario Keycloak existente: ${spec.email} (${user.id})`);
+    }
   }
 
   if (user) {

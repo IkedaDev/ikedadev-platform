@@ -259,15 +259,20 @@ impl JwtValidator for JwksJwtValidator {
 
         let claims = token_data.claims;
 
-        // Extract and validate `sub` -> user_id
+        // Extract and validate `sub` -> user_id (must be a non-nil UUID)
         let sub_str = claims.sub.as_deref().ok_or_else(|| {
             AppError::Unauthorized("JWT missing required 'sub' claim".to_string())
         })?;
         let user_id = Uuid::parse_str(sub_str.trim()).map_err(|_| {
             AppError::Unauthorized("JWT 'sub' claim is not a valid UUID".to_string())
         })?;
+        if user_id.is_nil() {
+            return Err(AppError::Unauthorized(
+                "JWT 'sub' claim cannot be the nil UUID".to_string(),
+            ));
+        }
 
-        // Extract and validate `tenant_id` claim
+        // Extract and validate `tenant_id` claim (must be a non-nil UUID)
         let tenant_val = claims
             .extra
             .get(&self.config.tenant_claim_name)
@@ -284,6 +289,12 @@ impl JwtValidator for JwksJwtValidator {
                 self.config.tenant_claim_name
             ))
         })?;
+        if tenant_id.is_nil() {
+            return Err(AppError::Unauthorized(format!(
+                "JWT '{}' claim cannot be the nil UUID",
+                self.config.tenant_claim_name
+            )));
+        }
 
         // Unify OIDC `scope` and Keycloak `realm_access.roles` without duplicates
         let mut seen = HashSet::new();

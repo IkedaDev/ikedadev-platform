@@ -129,6 +129,7 @@ fn row_to_booking(row: BookingRow, items: Vec<BookingItem>) -> Result<Booking, A
 
 async fn hydrate_bookings(
     tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
     rows: Vec<BookingRow>,
 ) -> Result<Vec<Booking>, AppError> {
     if rows.is_empty() {
@@ -143,10 +144,11 @@ async fn hydrate_bookings(
                tax_rate_bps, tax_included, line_subtotal, line_tax, line_total,
                duration_minutes_snapshot, buffer_minutes_snapshot, metadata, created_at
         FROM booking_items
-        WHERE booking_id = ANY($1)
+        WHERE tenant_id = $1 AND booking_id = ANY($2)
         ORDER BY created_at ASC, id ASC
         "#,
     )
+    .bind(tenant_id)
     .bind(&booking_ids)
     .fetch_all(&mut **tx)
     .await
@@ -263,10 +265,11 @@ impl BookingRepository for SqlxBookingRepository {
                 r#"
                 SELECT request_hash, response_status, response_body, expires_at
                 FROM idempotency_keys
-                WHERE idempotency_key = $1
+                WHERE tenant_id = $1 AND idempotency_key = $2
                 FOR UPDATE
                 "#,
             )
+            .bind(tenant_id)
             .bind(idem_key)
             .fetch_optional(&mut *tx)
             .await
@@ -290,13 +293,16 @@ impl BookingRepository for SqlxBookingRepository {
                 }
 
                 // Purge expired idempotency entry before re-using key
-                sqlx::query("DELETE FROM idempotency_keys WHERE idempotency_key = $1")
-                    .bind(idem_key)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(|e| {
-                        AppError::DatabaseError(format!("Failed to purge expired idempotency: {e}"))
-                    })?;
+                sqlx::query(
+                    "DELETE FROM idempotency_keys WHERE tenant_id = $1 AND idempotency_key = $2",
+                )
+                .bind(tenant_id)
+                .bind(idem_key)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| {
+                    AppError::DatabaseError(format!("Failed to purge expired idempotency: {e}"))
+                })?;
             }
         }
 
@@ -404,16 +410,20 @@ impl BookingRepository for SqlxBookingRepository {
                    notes, cancellation_reason, cancelled_at, completed_at,
                    metadata, created_by, updated_by, created_at, updated_at, deleted_at
             FROM bookings
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(id)
+        .bind(tenant_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to find booking: {e}")))?;
 
         let hydrated = match row {
-            Some(r) => hydrate_bookings(&mut tx, vec![r]).await?.into_iter().next(),
+            Some(r) => hydrate_bookings(&mut tx, tenant_id, vec![r])
+                .await?
+                .into_iter()
+                .next(),
             None => None,
         };
 
@@ -440,7 +450,7 @@ impl BookingRepository for SqlxBookingRepository {
                 total_price = $9, total_duration_minutes = $10, notes = $11,
                 cancellation_reason = $12, cancelled_at = $13, completed_at = $14,
                 metadata = $15, updated_by = $16, updated_at = NOW()
-            WHERE id = $17 AND deleted_at IS NULL
+            WHERE id = $17 AND tenant_id = $18 AND deleted_at IS NULL
             RETURNING id, tenant_id, booking_code, client_id, calendar_id, event_id,
                       starts_at, ends_at, timezone, status,
                       subtotal, tax_total, total_price, total_duration_minutes, currency,
@@ -465,13 +475,15 @@ impl BookingRepository for SqlxBookingRepository {
         .bind(&booking.metadata)
         .bind(booking.updated_by)
         .bind(booking.id)
+        .bind(tenant_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| map_booking_write_err("Failed to update booking", e))?
         .ok_or_else(|| AppError::NotFound(format!("Booking with ID '{}' not found", booking.id)))?;
 
         let updated = if replace_items {
-            sqlx::query("DELETE FROM booking_items WHERE booking_id = $1")
+            sqlx::query("DELETE FROM booking_items WHERE tenant_id = $1 AND booking_id = $2")
+                .bind(tenant_id)
                 .bind(booking.id)
                 .execute(&mut *tx)
                 .await
@@ -482,7 +494,7 @@ impl BookingRepository for SqlxBookingRepository {
             let items = insert_booking_items(&mut tx, tenant_id, row.id, &booking.items).await?;
             row_to_booking(row, items)?
         } else {
-            hydrate_bookings(&mut tx, vec![row])
+            hydrate_bookings(&mut tx, tenant_id, vec![row])
                 .await?
                 .into_iter()
                 .next()
@@ -505,10 +517,11 @@ impl BookingRepository for SqlxBookingRepository {
             r#"
             UPDATE bookings
             SET deleted_at = NOW(), updated_at = NOW()
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(id)
+        .bind(tenant_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to soft-delete booking: {e}")))?;
@@ -528,7 +541,9 @@ impl BookingRepository for SqlxBookingRepository {
         let mut tx = begin_tenant_tx(&self.pool, tenant_id).await?;
 
         let mut count_qb: QueryBuilder<'_, Postgres> =
-            QueryBuilder::new("SELECT COUNT(*) FROM bookings WHERE deleted_at IS NULL");
+            QueryBuilder::new("SELECT COUNT(*) FROM bookings WHERE tenant_id = ");
+        count_qb.push_bind(tenant_id);
+        count_qb.push(" AND deleted_at IS NULL");
         if let Some(ref filter) = criteria.filter {
             count_qb.push(" AND ");
             append_filter_group(&mut count_qb, filter)?;
@@ -546,8 +561,10 @@ impl BookingRepository for SqlxBookingRepository {
              subtotal, tax_total, total_price, total_duration_minutes, currency, \
              notes, cancellation_reason, cancelled_at, completed_at, \
              metadata, created_by, updated_by, created_at, updated_at, deleted_at \
-             FROM bookings WHERE deleted_at IS NULL",
+             FROM bookings WHERE tenant_id = ",
         );
+        data_qb.push_bind(tenant_id);
+        data_qb.push(" AND deleted_at IS NULL");
         if let Some(ref filter) = criteria.filter {
             data_qb.push(" AND ");
             append_filter_group(&mut data_qb, filter)?;
@@ -569,7 +586,7 @@ impl BookingRepository for SqlxBookingRepository {
             .await
             .map_err(|e| AppError::DatabaseError(format!("Failed to search bookings: {e}")))?;
 
-        let items = hydrate_bookings(&mut tx, rows).await?;
+        let items = hydrate_bookings(&mut tx, tenant_id, rows).await?;
 
         tx.commit()
             .await

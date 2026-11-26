@@ -19,6 +19,11 @@ const createApiKeySchema = z.object({
 
 import { getAuthRequestContext as getCtx } from '../middleware/auth.js';
 
+function isTenantAdmin(roles: string[] | undefined): boolean {
+  if (!roles || roles.length === 0) return false;
+  return roles.includes('tenant:admin') || roles.includes('platform:admin');
+}
+
 export const identityRoutes = new Hono();
 
 // GET /api/identity/users
@@ -31,6 +36,16 @@ identityRoutes.get('/users', async (c) => {
 // POST /api/identity/users
 identityRoutes.post('/users', async (c) => {
   const ctx = getCtx(c);
+  if (!isTenantAdmin(ctx.roles)) {
+    return c.json(
+      {
+        success: false,
+        code: 'FORBIDDEN',
+        message: 'Se requiere rol tenant:admin para crear usuarios.',
+      },
+      403,
+    );
+  }
   const raw = await c.req.json();
   const parsed = createUserSchema.safeParse(raw);
   if (!parsed.success) {
@@ -50,6 +65,16 @@ identityRoutes.post('/users', async (c) => {
 // DELETE /api/identity/users/:id
 identityRoutes.delete('/users/:id', async (c) => {
   const ctx = getCtx(c);
+  if (!isTenantAdmin(ctx.roles)) {
+    return c.json(
+      {
+        success: false,
+        code: 'FORBIDDEN',
+        message: 'Se requiere rol tenant:admin para eliminar usuarios.',
+      },
+      403,
+    );
+  }
   const id = c.req.param('id');
   await identityClient.deleteUser(id, ctx);
   return c.json({ success: true, message: 'Usuario deshabilitado y eliminado' });
@@ -58,6 +83,16 @@ identityRoutes.delete('/users/:id', async (c) => {
 // GET /api/identity/api-keys
 identityRoutes.get('/api-keys', async (c) => {
   const ctx = getCtx(c);
+  if (!isTenantAdmin(ctx.roles)) {
+    return c.json(
+      {
+        success: false,
+        code: 'FORBIDDEN',
+        message: 'Se requiere rol tenant:admin para listar API Keys.',
+      },
+      403,
+    );
+  }
   const keys = await identityClient.listApiKeys(ctx);
   return c.json({ success: true, data: keys });
 });
@@ -65,6 +100,16 @@ identityRoutes.get('/api-keys', async (c) => {
 // POST /api/identity/api-keys
 identityRoutes.post('/api-keys', async (c) => {
   const ctx = getCtx(c);
+  if (!isTenantAdmin(ctx.roles)) {
+    return c.json(
+      {
+        success: false,
+        code: 'FORBIDDEN',
+        message: 'Se requiere rol tenant:admin para crear API Keys.',
+      },
+      403,
+    );
+  }
   const raw = await c.req.json();
   const parsed = createApiKeySchema.safeParse(raw);
   if (!parsed.success) {
@@ -84,6 +129,16 @@ identityRoutes.post('/api-keys', async (c) => {
 // DELETE /api/identity/api-keys/:id
 identityRoutes.delete('/api-keys/:id', async (c) => {
   const ctx = getCtx(c);
+  if (!isTenantAdmin(ctx.roles)) {
+    return c.json(
+      {
+        success: false,
+        code: 'FORBIDDEN',
+        message: 'Se requiere rol tenant:admin para revocar API Keys.',
+      },
+      403,
+    );
+  }
   const id = c.req.param('id');
   await identityClient.revokeApiKey(id, ctx);
   return c.json({ success: true, message: 'API Key revocada' });

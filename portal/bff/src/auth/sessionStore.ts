@@ -33,6 +33,8 @@ const SESSION_CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // Sweep every 5 minutes
 
 // Note: In a multi-replica production deployment, back this store with Redis.
 const sessions = new Map<string, BffSession>();
+// Deduplicate concurrent refresh requests for the same session to avoid token-rotation races.
+const inflightRefreshes = new Map<string, Promise<BffSession | null>>();
 
 export function pruneExpiredSessions(now = Date.now()): number {
   let removed = 0;
@@ -251,9 +253,17 @@ export async function getValidSession(sessionId: string | undefined): Promise<Bf
     return null;
   }
 
-  // Refresh proactively if access token expires in less than 30 seconds
+  // Refresh proactively if access token expires in less than 30 seconds (deduplicated per session)
   if (now >= session.expiresAt - 30_000) {
-    return refreshSessionTokens(session);
+    const existingRefresh = inflightRefreshes.get(sessionId);
+    if (existingRefresh) {
+      return existingRefresh;
+    }
+    const refreshPromise = refreshSessionTokens(session).finally(() => {
+      inflightRefreshes.delete(sessionId);
+    });
+    inflightRefreshes.set(sessionId, refreshPromise);
+    return refreshPromise;
   }
 
   return session;
@@ -261,6 +271,7 @@ export async function getValidSession(sessionId: string | undefined): Promise<Bf
 
 export function deleteSession(sessionId: string | undefined): BffSession | null {
   if (!sessionId) return null;
+  inflightRefreshes.delete(sessionId);
   const existing = sessions.get(sessionId) ?? null;
   sessions.delete(sessionId);
   return existing;

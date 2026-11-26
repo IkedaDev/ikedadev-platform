@@ -120,10 +120,11 @@ impl ClientRepository for SqlxClientRepository {
             SELECT id, tenant_id, full_name, email, phone, tax_id, address, notes,
                    keycloak_user_id, is_active, metadata, created_at, updated_at, deleted_at
             FROM clients
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(id)
+        .bind(tenant_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to find client by ID: {e}")))?;
@@ -147,10 +148,11 @@ impl ClientRepository for SqlxClientRepository {
             SELECT id, tenant_id, full_name, email, phone, tax_id, address, notes,
                    keycloak_user_id, is_active, metadata, created_at, updated_at, deleted_at
             FROM clients
-            WHERE email = $1 AND deleted_at IS NULL
+            WHERE email = $1 AND tenant_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(email)
+        .bind(tenant_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to find client by email: {e}")))?;
@@ -174,10 +176,11 @@ impl ClientRepository for SqlxClientRepository {
             SELECT id, tenant_id, full_name, email, phone, tax_id, address, notes,
                    keycloak_user_id, is_active, metadata, created_at, updated_at, deleted_at
             FROM clients
-            WHERE tax_id = $1 AND deleted_at IS NULL
+            WHERE tax_id = $1 AND tenant_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(tax_id)
+        .bind(tenant_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to find client by tax_id: {e}")))?;
@@ -198,7 +201,7 @@ impl ClientRepository for SqlxClientRepository {
             SET full_name = $1, email = $2, phone = $3, tax_id = $4, address = $5,
                 notes = $6, keycloak_user_id = $7, is_active = $8, metadata = $9,
                 updated_at = NOW()
-            WHERE id = $10 AND deleted_at IS NULL
+            WHERE id = $10 AND tenant_id = $11 AND deleted_at IS NULL
             RETURNING id, tenant_id, full_name, email, phone, tax_id, address, notes,
                       keycloak_user_id, is_active, metadata, created_at, updated_at, deleted_at
             "#,
@@ -213,6 +216,7 @@ impl ClientRepository for SqlxClientRepository {
         .bind(client.is_active)
         .bind(&client.metadata)
         .bind(client.id)
+        .bind(tenant_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| map_write_error("Failed to update client", e))?
@@ -232,10 +236,11 @@ impl ClientRepository for SqlxClientRepository {
             r#"
             UPDATE clients
             SET deleted_at = NOW(), updated_at = NOW()
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(id)
+        .bind(tenant_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to soft-delete client: {e}")))?;
@@ -254,9 +259,11 @@ impl ClientRepository for SqlxClientRepository {
     ) -> Result<ClientSearchPage, AppError> {
         let mut tx = begin_tenant_tx(&self.pool, tenant_id).await?;
 
-        // 1. Total count query
+        // 1. Total count query (defense-in-depth: explicit tenant_id alongside RLS)
         let mut count_qb: QueryBuilder<'_, Postgres> =
-            QueryBuilder::new("SELECT COUNT(*) FROM clients WHERE deleted_at IS NULL");
+            QueryBuilder::new("SELECT COUNT(*) FROM clients WHERE tenant_id = ");
+        count_qb.push_bind(tenant_id);
+        count_qb.push(" AND deleted_at IS NULL");
         if let Some(ref filter) = criteria.filter {
             count_qb.push(" AND ");
             append_filter_group(&mut count_qb, filter)?;
@@ -268,12 +275,14 @@ impl ClientRepository for SqlxClientRepository {
             .await
             .map_err(|e| AppError::DatabaseError(format!("Failed to count clients: {e}")))?;
 
-        // 2. Paginated data query
+        // 2. Paginated data query (defense-in-depth: explicit tenant_id alongside RLS)
         let mut data_qb: QueryBuilder<'_, Postgres> = QueryBuilder::new(
             "SELECT id, tenant_id, full_name, email, phone, tax_id, address, notes, \
              keycloak_user_id, is_active, metadata, created_at, updated_at, deleted_at \
-             FROM clients WHERE deleted_at IS NULL",
+             FROM clients WHERE tenant_id = ",
         );
+        data_qb.push_bind(tenant_id);
+        data_qb.push(" AND deleted_at IS NULL");
         if let Some(ref filter) = criteria.filter {
             data_qb.push(" AND ");
             append_filter_group(&mut data_qb, filter)?;

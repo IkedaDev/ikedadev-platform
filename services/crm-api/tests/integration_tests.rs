@@ -27,7 +27,7 @@ fn test_crm_openapi_spec_generation() {
 #[tokio::test]
 async fn test_crm_rls_isolation_tax_id_uniqueness_and_criteria_search() {
     let db_url = std::env::var("CRM_DATABASE_URL").unwrap_or_else(|_| {
-        "postgres://postgres:postgres@localhost:5432/crm_db?sslmode=disable".to_string()
+        "postgres://ikeda_app:ikeda_app_password@localhost:5432/crm_db?sslmode=disable".to_string()
     });
 
     let pool = match sqlx::PgPool::connect(&db_url).await {
@@ -44,11 +44,17 @@ async fn test_crm_rls_isolation_tax_id_uniqueness_and_criteria_search() {
     let raw_key_a = format!("ikeda_crm_a_{}", Uuid::new_v4().simple());
     let raw_key_b = format!("ikeda_crm_b_{}", Uuid::new_v4().simple());
 
-    // Insert real API keys into crm_db.api_keys
+    // Insert real API keys into crm_db.api_keys (RLS-safe under NOBYPASSRLS)
     for (tenant_id, name, raw_key) in [
         (tenant_a, "Tenant A CRM Key", &raw_key_a),
         (tenant_b, "Tenant B CRM Key", &raw_key_b),
     ] {
+        let mut tx = pool.begin().await.expect("Failed to begin CRM key tx");
+        sqlx::query("SELECT set_config('app.current_tenant', $1, true)")
+            .bind(tenant_id.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("Failed to set RLS context");
         sqlx::query(
             r#"
             INSERT INTO api_keys (tenant_id, name, key_prefix, key_hash, scopes, is_active)
@@ -58,9 +64,10 @@ async fn test_crm_rls_isolation_tax_id_uniqueness_and_criteria_search() {
         .bind(tenant_id)
         .bind(name)
         .bind(hash_api_key(raw_key))
-        .execute(&pool)
+        .execute(&mut *tx)
         .await
         .expect("Failed to insert CRM API key");
+        tx.commit().await.expect("Failed to commit CRM key tx");
     }
 
     let state = AppState::new(

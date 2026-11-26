@@ -16,6 +16,22 @@ import type {
 } from '../types/platform.js';
 
 const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const NIL_UUID = '00000000-0000-0000-0000-000000000000';
+
+function isValidTenantUuid(value: string | undefined): value is string {
+  return typeof value === 'string' && UUID_REGEX.test(value) && value !== NIL_UUID;
+}
+
+/**
+ * Only allow `PLATFORM_ADMIN_API_KEY` elevation when the user identity was established
+ * via a server-verified BFF session cookie (obtained directly from Keycloak token exchange).
+ * Raw `Authorization: Bearer` headers are NOT signature-verified in the BFF, so they MUST
+ * be forwarded directly to `identity-api` for cryptographic RS256 JWKS verification.
+ */
+function resolveSettingsApiKeyOverride(authMethod: 'session' | 'bearer' | undefined): string | undefined {
+  return authMethod === 'session' ? config.PLATFORM_ADMIN_API_KEY : undefined;
+}
 
 export const DEFAULT_TENANT_SETTINGS: TenantSettings = {
   branding: {
@@ -210,7 +226,7 @@ export const settingsRoutes = new Hono();
 // GET /api/settings — Authenticated tenant settings (strictly scoped to session tenantId)
 settingsRoutes.get('/', async (c) => {
   const ctx = getCtx(c);
-  if (!ctx.tenantId) {
+  if (!isValidTenantUuid(ctx.tenantId)) {
     return c.json(
       {
         success: false,
@@ -222,11 +238,12 @@ settingsRoutes.get('/', async (c) => {
   }
 
   const isAdmin = hasSettingsAdminRole(ctx.roles);
+  const apiKeyOverride = resolveSettingsApiKeyOverride(ctx.authMethod);
 
   try {
     const tenant = await identityClient.getTenant(ctx.tenantId, {
       ctx,
-      apiKeyOverride: config.PLATFORM_ADMIN_API_KEY,
+      apiKeyOverride,
     });
     const settings = mergeTenantConfigWithDefaults(tenant.config);
     cacheTenantBranding(tenant.slug, settings.branding);
@@ -258,7 +275,7 @@ settingsRoutes.get('/', async (c) => {
 // PATCH /api/settings — Authenticated tenant settings update (requires tenant:admin or platform:admin)
 settingsRoutes.patch('/', async (c) => {
   const ctx = getCtx(c);
-  if (!ctx.tenantId) {
+  if (!isValidTenantUuid(ctx.tenantId)) {
     return c.json(
       {
         success: false,
@@ -295,11 +312,12 @@ settingsRoutes.patch('/', async (c) => {
   }
 
   const patch = parsed.data;
+  const apiKeyOverride = resolveSettingsApiKeyOverride(ctx.authMethod);
 
   // Read existing tenant config first so we deep-merge without clobbering unrelated keys
   const currentTenant = await identityClient.getTenant(ctx.tenantId, {
     ctx,
-    apiKeyOverride: config.PLATFORM_ADMIN_API_KEY,
+    apiKeyOverride,
   });
 
   const existingConfig = isPlainObject(currentTenant.config) ? currentTenant.config : {};
@@ -341,7 +359,7 @@ settingsRoutes.patch('/', async (c) => {
     { config: mergedConfig },
     {
       ctx,
-      apiKeyOverride: config.PLATFORM_ADMIN_API_KEY,
+      apiKeyOverride,
     },
   );
 

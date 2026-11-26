@@ -222,7 +222,8 @@ fn setup_test_app(
 #[tokio::test]
 async fn test_tenant_isolation_with_real_sqlx_api_keys_table() {
     let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgres://postgres:postgres@localhost:5432/events_db?sslmode=disable".to_string()
+        "postgres://ikeda_app:ikeda_app_password@localhost:5432/events_db?sslmode=disable"
+            .to_string()
     });
 
     let pool = match sqlx::PgPool::connect(&db_url).await {
@@ -241,30 +242,31 @@ async fn test_tenant_isolation_with_real_sqlx_api_keys_table() {
     let hash_a = hash_api_key(&raw_key_a);
     let hash_b = hash_api_key(&raw_key_b);
 
-    // 1. Insert real API Keys into PostgreSQL api_keys table
-    sqlx::query(
-        r#"
-        INSERT INTO api_keys (tenant_id, name, key_prefix, key_hash, scopes, is_active)
-        VALUES ($1, 'Tenant A Production Key', 'ikeda_live', $2, '{"*"}', true)
-        "#,
-    )
-    .bind(tenant_a)
-    .bind(&hash_a)
-    .execute(&pool)
-    .await
-    .expect("Failed to insert Tenant A API key");
-
-    sqlx::query(
-        r#"
-        INSERT INTO api_keys (tenant_id, name, key_prefix, key_hash, scopes, is_active)
-        VALUES ($1, 'Tenant B Production Key', 'ikeda_live', $2, '{"*"}', true)
-        "#,
-    )
-    .bind(tenant_b)
-    .bind(&hash_b)
-    .execute(&pool)
-    .await
-    .expect("Failed to insert Tenant B API key");
+    // 1. Insert real API Keys into PostgreSQL api_keys table (RLS-safe under NOBYPASSRLS)
+    for (tid, name, key_hash) in [
+        (tenant_a, "Tenant A Production Key", &hash_a),
+        (tenant_b, "Tenant B Production Key", &hash_b),
+    ] {
+        let mut tx = pool.begin().await.expect("Failed to begin events key tx");
+        sqlx::query("SELECT set_config('app.current_tenant', $1, true)")
+            .bind(tid.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("Failed to set RLS context");
+        sqlx::query(
+            r#"
+            INSERT INTO api_keys (tenant_id, name, key_prefix, key_hash, scopes, is_active)
+            VALUES ($1, $2, 'ikeda_live', $3, '{"*"}', true)
+            "#,
+        )
+        .bind(tid)
+        .bind(name)
+        .bind(key_hash)
+        .execute(&mut *tx)
+        .await
+        .expect("Failed to insert Tenant API key");
+        tx.commit().await.expect("Failed to commit events key tx");
+    }
 
     // 2. Initialize application with real SqlxApiKeyValidator
     let sqlx_validator = Arc::new(SqlxApiKeyValidator::new(pool.clone()));
