@@ -1,0 +1,124 @@
+name: Deploy Portal BFF
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "portal/bff/**"
+      - ".github/workflows/portal-bff.yml"
+  workflow_dispatch:
+
+env:
+  # Kept as tenant-portal-bff to preserve existing Cloud Run service names
+  # (tenant-portal-bff-qa / tenant-portal-bff-prod), DNS mappings, and IAM bindings.
+  SERVICE_NAME: tenant-portal-bff
+
+jobs:
+  build-and-deploy:
+    name: Build & Deploy tenant-portal-bff (Cloud Run)
+    if: ${{ vars.GCP_DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'qa' }}
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Compute Short SHA, Environment & Artifact Registry URI
+        id: meta
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          if [ "${GITHUB_REF_NAME}" = "main" ]; then
+            ENV_PREFIX="prod"
+          else
+            ENV_PREFIX="qa"
+          fi
+          REGION="${{ vars.GCP_REGION || 'us-central1' }}"
+          AR_REPO="${{ vars.GCP_AR_REPO || 'ikeda-platform' }}"
+          PROJECT_ID="${{ vars.GCP_PROJECT_ID }}"
+          IMAGE_TAG="${ENV_PREFIX}-${SHORT_SHA}"
+          IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/${SERVICE_NAME}:${IMAGE_TAG}"
+          CLOUD_RUN_SERVICE="${SERVICE_NAME}-${ENV_PREFIX}"
+          echo "env_prefix=${ENV_PREFIX}" >> "$GITHUB_OUTPUT"
+          echo "region=${REGION}" >> "$GITHUB_OUTPUT"
+          echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+          echo "cloud_run_service=${CLOUD_RUN_SERVICE}" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${{ steps.meta.outputs.region }}-docker.pkg.dev" --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push linux/amd64 Image (Node 22 Alpine + GHA cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: portal/bff
+          file: portal/bff/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.image_uri }}
+          cache-from: type=gha,scope=tenant-portal-bff
+          cache-to: type=gha,mode=max,scope=tenant-portal-bff
+
+      - name: Deploy Public BFF to Cloud Run (Private IAM Invoker)
+        env:
+          BFF_PUBLIC_URL: ${{ vars.BFF_PUBLIC_URL }}
+          WEB_APP_URL: ${{ vars.WEB_APP_URL }}
+          CORS_ORIGIN: ${{ vars.CORS_ORIGIN }}
+          KEYCLOAK_PUBLIC_URL: ${{ vars.KEYCLOAK_PUBLIC_URL }}
+          KEYCLOAK_INTERNAL_URL: ${{ vars.KEYCLOAK_INTERNAL_URL }}
+          KEYCLOAK_REALM: ${{ vars.KEYCLOAK_REALM }}
+          KEYCLOAK_CLIENT_ID: ${{ vars.KEYCLOAK_BFF_CLIENT_ID }}
+          KEYCLOAK_CLIENT_SECRET: ${{ secrets.KEYCLOAK_BFF_CLIENT_SECRET }}
+          PLATFORM_ADMIN_API_KEY: ${{ secrets.PLATFORM_ADMIN_API_KEY }}
+          IDENTITY_API_URL: ${{ vars.IDENTITY_API_URL }}
+          CRM_API_URL: ${{ vars.CRM_API_URL }}
+          EVENTS_API_URL: ${{ vars.EVENTS_API_URL }}
+          CATALOG_API_URL: ${{ vars.CATALOG_API_URL }}
+          BOOKINGS_API_URL: ${{ vars.BOOKINGS_API_URL }}
+          TELEMETRY_API_URL: ${{ vars.TELEMETRY_API_URL }}
+        run: |
+          ENV_VARS="GCP_IAM_AUTH=true"
+          [ -n "${BFF_PUBLIC_URL}" ] && ENV_VARS="${ENV_VARS},BFF_PUBLIC_URL=${BFF_PUBLIC_URL}"
+          [ -n "${WEB_APP_URL}" ] && ENV_VARS="${ENV_VARS},WEB_APP_URL=${WEB_APP_URL}"
+          [ -n "${CORS_ORIGIN}" ] && ENV_VARS="${ENV_VARS},CORS_ORIGIN=${CORS_ORIGIN}"
+          [ -n "${KEYCLOAK_PUBLIC_URL}" ] && ENV_VARS="${ENV_VARS},KEYCLOAK_PUBLIC_URL=${KEYCLOAK_PUBLIC_URL}"
+          [ -n "${KEYCLOAK_INTERNAL_URL}" ] && ENV_VARS="${ENV_VARS},KEYCLOAK_INTERNAL_URL=${KEYCLOAK_INTERNAL_URL}"
+          [ -n "${KEYCLOAK_REALM}" ] && ENV_VARS="${ENV_VARS},KEYCLOAK_REALM=${KEYCLOAK_REALM}"
+          [ -n "${KEYCLOAK_CLIENT_ID}" ] && ENV_VARS="${ENV_VARS},KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID}"
+          [ -n "${KEYCLOAK_CLIENT_SECRET}" ] && ENV_VARS="${ENV_VARS},KEYCLOAK_CLIENT_SECRET=${KEYCLOAK_CLIENT_SECRET}"
+          [ -n "${PLATFORM_ADMIN_API_KEY}" ] && ENV_VARS="${ENV_VARS},PLATFORM_ADMIN_API_KEY=${PLATFORM_ADMIN_API_KEY}"
+          [ -n "${IDENTITY_API_URL}" ] && ENV_VARS="${ENV_VARS},IDENTITY_API_URL=${IDENTITY_API_URL}"
+          [ -n "${CRM_API_URL}" ] && ENV_VARS="${ENV_VARS},CRM_API_URL=${CRM_API_URL}"
+          [ -n "${EVENTS_API_URL}" ] && ENV_VARS="${ENV_VARS},EVENTS_API_URL=${EVENTS_API_URL}"
+          [ -n "${CATALOG_API_URL}" ] && ENV_VARS="${ENV_VARS},CATALOG_API_URL=${CATALOG_API_URL}"
+          [ -n "${BOOKINGS_API_URL}" ] && ENV_VARS="${ENV_VARS},BOOKINGS_API_URL=${BOOKINGS_API_URL}"
+          [ -n "${TELEMETRY_API_URL}" ] && ENV_VARS="${ENV_VARS},TELEMETRY_API_URL=${TELEMETRY_API_URL}"
+
+          gcloud run deploy "${{ steps.meta.outputs.cloud_run_service }}" \
+            --image="${{ steps.meta.outputs.image_uri }}" \
+            --region="${{ steps.meta.outputs.region }}" \
+            --project="${{ vars.GCP_PROJECT_ID }}" \
+            --service-account="bff-invoker@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com" \
+            --allow-unauthenticated \
+            --min-instances=0 \
+            --max-instances=1 \
+            --cpu=1 \
+            --memory=256Mi \
+            --cpu-throttling \
+            --concurrency=80 \
+            --timeout=15s \
+            --set-env-vars="${ENV_VARS}"

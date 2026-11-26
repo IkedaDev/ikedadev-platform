@@ -381,6 +381,7 @@
 
     <nav class="nav-group">
       <div class="nav-label">Uso e Integración</div>
+      <a class="nav-link" href="#portal-saas">Portal SaaS (Kropy) <span class="badge b-green">portal/</span></a>
       <a class="nav-link" href="#como-usar">Cómo Usarla (Patrón BFF)</a>
       <a class="nav-link" href="#casos-uso">Casos de Uso E2E</a>
       <a class="nav-link" href="#criteria">Motor Criteria (JSONB)</a>
@@ -754,6 +755,32 @@
       </table>
     </section>
 
+    <!-- Portal SaaS (Kropy) -->
+    <section id="portal-saas">
+      <h2>6d. Portal SaaS Multi-Tenant: <code>portal/</code> <span class="badge b-green">Design System Kropy</span></h2>
+      <p>
+        El portal administrativo fue promovido a <code>portal/</code> (<code>portal/bff</code> en Hono/Node 22 + <code>portal/web</code> en React 19/Vite) como interfaz SaaS multi-tenant lista para producción. Adopta el <strong>Design System Kropy</strong> (<code>Plus Jakarta Sans</code>, esmeralda <code>#059669</code> / <code>#10b981</code>, modo claro/oscuro y librería UI propia en <code>portal/web/src/ui/</code>: <code>DataTable</code>, <code>DrawerProvider</code>, <code>ModalProvider</code>, <code>ToastProvider</code>, <code>Skeleton</code>) y personalización dinámica por tenant almacenada en <code>tenants.config</code>.
+      </p>
+      <div class="grid-2">
+        <div class="card">
+          <h4>🎨 Branding Dinámico &amp; Feature Toggles (<code>SettingsView</code>)</h4>
+          <ul>
+            <li><code>GET /api/settings</code> y <code>PATCH /api/settings</code>: leen y actualizan <code>displayName</code>, <code>logoUrl</code>, <code>primaryColor</code>, <code>accentColor</code>, <code>themeMode</code>, moneda/zona horaria/idioma y toggles <code>features.{crm,catalog,events,bookings,telemetry}</code>.</li>
+            <li><code>GET /api/branding/:slug</code>: endpoint público pre-login para personalizar <code>LoginView</code> vía <code>?tenant=&lt;slug&gt;</code> o subdominio.</li>
+            <li><code>PLATFORM_ADMIN_API_KEY</code> (secreto opcional en GCP): usado únicamente por <code>portal/bff/src/routes/settings.ts</code> manteniendo el <code>tenantId</code> estrictamente desde la sesión autenticada.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h4>☁️ Despliegue Productivo</h4>
+          <ul>
+            <li><strong>BFF (<code>portal/bff</code>):</strong> desplegado vía <code>.github/workflows/portal-bff.yml</code> en Google Cloud Run conservando el nombre de servicio <code>tenant-portal-bff-qa</code> / <code>tenant-portal-bff-prod</code> para no romper DNS ni bindings IAM.</li>
+            <li><strong>Web (<code>portal/web</code>):</strong> desplegado en <strong>Cloudflare Pages</strong> (<code>Root directory: portal/web</code>, <code>npm run build</code>, output <code>dist</code>, <code>VITE_BFF_URL</code>).</li>
+            <li><strong>Telemetría y Auditoría:</strong> correlaciona <code>X-Request-Id</code>, emite eventos <code>AUDIT</code> asíncronos y expone <code>TelemetryView</code> junto con el tracker batch <code>TRACKING</code>.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
     <!-- Cómo se espera que se use -->
     <section id="como-usar">
       <h2>7. Cómo se Espera que se Use (Patrón BFF y Contratos OpenAPI)</h2>
@@ -986,6 +1013,7 @@ docker compose --profile full --profile observability up -d --build</code></pre>
           <tr><td><code>catalog-api.yml</code></td><td>Push con filtro <code>paths:</code> de <code>catalog-api</code> + <code>ikeda-core</code></td><td>Build &amp; Push independiente con <code>scope=catalog-api</code> y Short SHA.</td></tr>
           <tr><td><code>bookings-api.yml</code></td><td>Push con filtro <code>paths:</code> de <code>bookings-api</code> + <code>ikeda-core</code></td><td>Build &amp; Push independiente con <code>scope=bookings-api</code> y Short SHA.</td></tr>
           <tr><td><code>telemetry-api.yml</code></td><td>Push con filtro <code>paths:</code> de <code>telemetry-api</code> + <code>ikeda-core</code></td><td>Build &amp; Push independiente con <code>scope=telemetry-api</code>, <code>LOG_FORMAT=json</code> y despliegue privado en Cloud Run.</td></tr>
+          <tr><td><code>portal-bff.yml</code></td><td>Push con filtro <code>paths:</code> de <code>portal/bff/**</code></td><td>Build Node 22 Alpine desde <code>portal/bff</code> y despliegue en Cloud Run manteniendo <code>tenant-portal-bff-qa</code> / <code>tenant-portal-bff-prod</code> (con <code>PLATFORM_ADMIN_API_KEY</code> opcional y <code>TELEMETRY_API_URL</code>).</td></tr>
         </tbody>
       </table>
 

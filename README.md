@@ -1,6 +1,6 @@
 # ikedadev-platform
 
-Monorepo modular en **Rust (Cargo Workspace)** diseñado bajo **Clean Architecture** y **aislamiento multi-tenant estricto (PostgreSQL RLS)** para alojar el ecosistema de microservicios de la plataforma IkedaDev, acompañado de un portal administrativo de referencia (**BFF Hono + React/Vite**) y entorno local con **Keycloak OIDC**.
+Monorepo modular en **Rust (Cargo Workspace)** diseñado bajo **Clean Architecture** y **aislamiento multi-tenant estricto (PostgreSQL RLS)** para alojar el ecosistema de microservicios de la plataforma IkedaDev, acompañado del **Portal SaaS administrativo (`portal/bff` + `portal/web`)** con **Design System Kropy**, branding dinámico por tenant y autenticación **Keycloak OIDC**.
 
 ---
 
@@ -34,10 +34,10 @@ ikedadev-platform/
 │   ├── test-api.sh / test-api.ps1       # Scripts de smoke test local
 ├── docs/
 │   └── platform-documentation.html      # Documentación técnica interactiva de la plataforma
-├── examples/
-│   └── tenant-portal/                   # Portal de ejemplo (BFF Hono + Web React/Vite + Keycloak PKCE)
-│       ├── bff/                         # Backend-for-Frontend con sesiones HttpOnly, refresh, X-Request-Id y AUDIT
-│       └── web/                         # SPA administrativa en React 19 + TypeScript + Vite
+├── portal/                              # Portal SaaS multi-tenant (BFF Hono + Web React/Vite + Design System Kropy)
+│   ├── README.md                        # Guía completa de arquitectura, branding, telemetría y despliegue
+│   ├── bff/                             # Backend-for-Frontend con sesiones HttpOnly, /api/settings, X-Request-Id y AUDIT
+│   └── web/                             # SPA administrativa en React 19 + TypeScript + Vite (Cloudflare Pages)
 └── .github/workflows/
     ├── ci.yml                           # Quality Gate del workspace (fmt, clippy -D warnings, tests)
     ├── events-api.yml                   # Build OCI multi-stage (cargo-chef) y push a ghcr.io / Artifact Registry
@@ -45,7 +45,8 @@ ikedadev-platform/
     ├── identity-api.yml                 # Build OCI multi-stage (cargo-chef) y push a ghcr.io / Artifact Registry
     ├── catalog-api.yml                  # Build OCI multi-stage (cargo-chef) y push a ghcr.io / Artifact Registry
     ├── bookings-api.yml                 # Build OCI multi-stage (cargo-chef) y push a ghcr.io / Artifact Registry
-    └── telemetry-api.yml                # Build OCI multi-stage (cargo-chef) y push a ghcr.io / Artifact Registry
+    ├── telemetry-api.yml                # Build OCI multi-stage (cargo-chef) y push a ghcr.io / Artifact Registry
+    └── portal-bff.yml                   # Build Node 22 Alpine desde portal/bff y deploy a Cloud Run (tenant-portal-bff-*)
 ```
 
 ---
@@ -63,8 +64,8 @@ ikedadev-platform/
 | **Keycloak (`ikeda`)** | `8180` | In-memory (dev) | — | `http://localhost:8180/realms/ikeda/.well-known/openid-configuration` | `http://localhost:8180` |
 | **PostgreSQL 17** | `5432` | Multi-DB (`events_db`, `crm_db`, `identity_db`, `catalog_db`, `bookings_db`, `telemetry_db`) | — | — | `pg_isready` |
 | **Grafana / Loki** *(opcional)* | `3000` / `3100` | Volumen `loki_data` | — | — | `http://localhost:3100/ready` |
-| **Tenant Portal BFF** | `4000` | — (stateless + Keycloak) | — | — | `http://localhost:4000/health` |
-| **Tenant Portal Web** | `5173` | — | — | — | `http://localhost:5173` |
+| **Portal SaaS BFF (`portal/bff`)** | `4000` | — (stateless + Keycloak) | — | — | `http://localhost:4000/health` |
+| **Portal SaaS Web (`portal/web`)** | `5173` | — | — | — | `http://localhost:5173` |
 
 ---
 
@@ -74,7 +75,7 @@ ikedadev-platform/
 - **Observabilidad y Telemetría:** módulo compartido `ikeda_core::observability` (logs JSON/pretty vía `tracing`, correlación `X-Request-Id`, latencia y `tenant_id` sin registrar credenciales sensibles), microservicio `telemetry-api` (`:8085`) para eventos `TRACKING`/`AUDIT` y perfil opcional `observability` en Docker Compose (**Loki + Promtail + Grafana** en `deploy/observability/`).
 - **Identidad y Autenticación:** Keycloak 26 (OIDC Authorization Code + PKCE para usuarios, `client_credentials` para provisión desde `identity-api`) y API Keys M2M (SHA-256) centralizadas en `identity_db` con caché en memoria (`CachedApiKeyValidator`).
 - **Aislamiento Multi-Tenant:** PostgreSQL **Row-Level Security (RLS)** habilitado y forzado (`ENABLE` + `FORCE ROW LEVEL SECURITY`) en todas las tablas de negocio.
-- **Portal de Referencia (`examples/tenant-portal`):** BFF en TypeScript + Hono (`@hono/node-server`, `zod`) y SPA en React + Vite.
+- **Portal SaaS (`portal/`):** BFF en TypeScript + Hono (`portal/bff`, `@hono/node-server`, `zod`, endpoints `/api/settings` y `/api/branding/:slug`, secreto opcional `PLATFORM_ADMIN_API_KEY` en GCP) y SPA en React 19 + Vite (`portal/web`, desplegable en Cloudflare Pages) con **Design System Kropy**, branding dinámico por tenant y feature toggles desde `SettingsView`.
 
 ---
 
@@ -131,16 +132,16 @@ cargo run -p bookings-api
 cargo run -p telemetry-api
 ```
 
-### Portal de Ejemplo (`examples/tenant-portal`)
+### Portal SaaS (`portal/`)
 
-Consulta [`examples/tenant-portal/README.md`](examples/tenant-portal/README.md) para instrucciones completas. En resumen:
+Consulta [`portal/README.md`](portal/README.md) para instrucciones completas sobre el **Design System Kropy**, branding dinámico y feature toggles (`SettingsView` / `GET/PATCH /api/settings`), telemetría y despliegue en Cloud Run + Cloudflare Pages. En resumen:
 
 ```bash
-# Terminal 1 — BFF (puerto 4000)
-cd examples/tenant-portal/bff && npm install && npm run dev
+# Terminal 1 — Portal BFF (puerto 4000)
+cd portal/bff && npm install && npm run dev
 
-# Terminal 2 — Web React/Vite (puerto 5173)
-cd examples/tenant-portal/web && npm install && npm run dev
+# Terminal 2 — Portal Web React/Vite (puerto 5173)
+cd portal/web && npm install && npm run dev
 ```
 
 ### Documentación Técnica
@@ -169,8 +170,8 @@ cargo test -p ikeda-core --features dev-auth
 Para validar el portal TypeScript:
 
 ```bash
-cd examples/tenant-portal/bff && npx tsc --noEmit
-cd examples/tenant-portal/web && npx tsc --noEmit
+cd portal/bff && npx tsc --noEmit
+cd portal/web && npx tsc --noEmit && npm run build
 ```
 
 ---
@@ -181,6 +182,7 @@ Los workflows en `.github/workflows/` operan de forma independiente con filtros 
 
 1. **[`ci.yml`](.github/workflows/ci.yml):** Quality Gate en PRs y pushes a `main`/`develop` (`cargo fmt`, `cargo clippy -D warnings`, `cargo test --workspace --lib`).
 2. **[`events-api.yml`](.github/workflows/events-api.yml), [`crm-api.yml`](.github/workflows/crm-api.yml), [`identity-api.yml`](.github/workflows/identity-api.yml), [`catalog-api.yml`](.github/workflows/catalog-api.yml), [`bookings-api.yml`](.github/workflows/bookings-api.yml), [`telemetry-api.yml`](.github/workflows/telemetry-api.yml):** Compilan cada servicio con `cargo-chef` y Docker Buildx únicamente cuando cambia su carpeta, `crates/ikeda-core`, `Cargo.toml` o `Cargo.lock`, publicando imágenes inmutables etiquetadas con `prod-<short-sha>` / `qa-<short-sha>` y despliegue automatizado en Google Cloud Run o Kubernetes ([`deploy/k8s/base`](deploy/k8s/base), [`deploy/argo`](deploy/argo)).
+3. **[`portal-bff.yml`](.github/workflows/portal-bff.yml):** Construye la imagen Node 22 Alpine de `portal/bff` y la despliega en Google Cloud Run manteniendo el servicio `tenant-portal-bff-qa` / `tenant-portal-bff-prod` (con `PLATFORM_ADMIN_API_KEY` opcional para `/api/settings`). El frontend `portal/web` se despliega en Cloudflare Pages.
 
 ---
 

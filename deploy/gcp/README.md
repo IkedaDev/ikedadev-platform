@@ -1,6 +1,6 @@
 # Despliegue en GCP (Cloud Run + Artifact Registry + Neon + Cloudflare)
 
-Runbook operativo paso a paso para desplegar **`ikedadev-platform`** (6 microservicios Rust privados + `tenant-portal-bff` público) en **Google Cloud Platform** con costo fijo **\$0**, región única Tier 1 (`us-central1`), autenticación sin llaves JSON (**Workload Identity Federation**) y protección automática de facturación (**Billing Kill Switch**).
+Runbook operativo paso a paso para desplegar **`ikedadev-platform`** (6 microservicios Rust privados + Portal SaaS BFF `portal/bff` desplegado como `tenant-portal-bff` público + Portal Web `portal/web` en Cloudflare Pages) en **Google Cloud Platform** con costo fijo **\$0**, región única Tier 1 (`us-central1`), autenticación sin llaves JSON (**Workload Identity Federation**) y protección automática de facturación (**Billing Kill Switch**).
 
 ---
 
@@ -216,22 +216,23 @@ En **GitHub → Settings → Environments**, crea dos entornos: **`qa`** (rama `
 | `IDENTITY_READER_DATABASE_URL` | `postgres://api_key_reader:<pass>@<neon-pooler>/identity_db?sslmode=require` |
 | `KEYCLOAK_ADMIN_CLIENT_SECRET` | Secreto del cliente `identity-api-admin` |
 | `KEYCLOAK_BFF_CLIENT_SECRET` | Secreto del cliente `tenant-portal-bff` |
-| `TENANT_API_KEY` | API key M2M de seed/administración |
+| `PLATFORM_ADMIN_API_KEY` | *(Opcional)* API key de plataforma usada exclusivamente por `/api/settings` y `/api/branding/:slug` en `portal/bff` para leer/actualizar `tenants.config` del tenant autenticado en `identity-api` (sin exponer `TENANT_API_KEY` estática) |
 | `QSTASH_TOKEN` | Token de Upstash QStash (opcional) |
 
 ---
 
 ## Paso 6: Configuración de Cloudflare (Pages + Subdominios + WAF)
 
-1. **Cloudflare Pages (`examples/tenant-portal/web`):**
+1. **Cloudflare Pages (`portal/web`):**
    - Conecta el repositorio `IkedaDev/ikedadev-platform`.
-   - **Root directory:** `examples/tenant-portal/web`
+   - **Root directory:** `portal/web`
    - **Build command:** `npm run build`
    - **Build output directory:** `dist`
-   - **Environment variable:** `VITE_BFF_URL=https://bff-qa.ikedadev.com` (o `https://bff.ikedadev.com` en prod).
+   - **Environment variable:** `VITE_BFF_URL=https://platform-bff-qa.ikedadev.com` (o tu dominio público de BFF en prod).
+   - Incluye el **Design System Kropy**, branding dinámico por tenant (`tenants.config`) y feature toggles desde `SettingsView`.
 2. **Subdominios con guiones (SSL Universal gratuito con Proxy Naranja):**
-   - Usa subdominios de un solo nivel (ej. `portal-qa.ikedadev.com`, `bff-qa.ikedadev.com`, `auth-qa.ikedadev.com`) en lugar de sub-subdominios (`qa.bff.ikedadev.com`), para cubrirlos con el certificado Universal SSL gratuito de Cloudflare sin pagar Advanced Certificate Manager.
-   - Mapea `bff-qa.ikedadev.com` al servicio `tenant-portal-bff-qa` (Cloud Run Domain Mapping o CNAME con SSL Full Strict).
+   - Usa subdominios de un solo nivel (ej. `portal-qa.ikedadev.com`, `platform-bff-qa.ikedadev.com`, `auth-qa.ikedadev.com`) en lugar de sub-subdominios (`qa.bff.ikedadev.com`), para cubrirlos con el certificado Universal SSL gratuito de Cloudflare sin pagar Advanced Certificate Manager.
+   - El workflow [`.github/workflows/portal-bff.yml`](../../.github/workflows/portal-bff.yml) construye desde `portal/bff` pero mantiene el nombre del servicio Cloud Run **`tenant-portal-bff-qa`** / **`tenant-portal-bff-prod`** para preservar los mapeos DNS existentes (ej. `platform-bff-qa.ikedadev.com`) y los bindings IAM (`bff-invoker`).
 3. **Regla WAF Rate Limiting (Capa Gratuita):**
    - Ve a **Security → WAF → Rate limiting rules → Create rule**.
    - **Expression:** `(http.host eq "bff-qa.ikedadev.com")`

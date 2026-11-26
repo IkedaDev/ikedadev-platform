@@ -33,7 +33,9 @@
       { "name": "crm:write", "description": "Write access to crm-api" },
       { "name": "catalog:write", "description": "Write access to catalog-api" },
       { "name": "identity:write", "description": "Write access to identity-api" },
-      { "name": "bookings:write", "description": "Write access to bookings-api" }
+      { "name": "bookings:write", "description": "Write access to bookings-api" },
+      { "name": "telemetry:read", "description": "Read access to telemetry-api" },
+      { "name": "telemetry:write", "description": "Write access to telemetry-api" }
     ]
   },
   "clients": [
@@ -139,7 +141,9 @@
         "crm:write",
         "catalog:write",
         "identity:write",
-        "bookings:write"
+        "bookings:write",
+        "telemetry:read",
+        "telemetry:write"
       ]
     },
     {
@@ -164,7 +168,9 @@
         "tenant:member",
         "events:write",
         "crm:write",
-        "bookings:write"
+        "bookings:write",
+        "telemetry:read",
+        "telemetry:write"
       ]
     }
   ]
