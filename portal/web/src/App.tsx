@@ -14,6 +14,7 @@ import { ContentView } from './views/ContentView';
 import { DashboardView } from './views/DashboardView';
 import { IdentityView } from './views/IdentityView';
 import { LoginView } from './views/LoginView';
+import { MediaView } from './views/MediaView';
 import { SettingsView } from './views/SettingsView';
 import { TelemetryView } from './views/TelemetryView';
 
@@ -209,6 +210,7 @@ export function App() {
       {section === 'catalog' && settings.features.catalog !== false && <CatalogView />}
       {section === 'bookings' && settings.features.bookings !== false && <BookingsView />}
       {section === 'content' && settings.features.content !== false && <ContentView user={user} />}
+      {section === 'media' && <MediaView user={user} />}
       {section === 'telemetry' && settings.features.telemetry !== false && <TelemetryView />}
       {section === 'identity' && <IdentityView />}
       {section === 'settings' && <SettingsView onDirtyChange={handleSettingsDirtyChange} />}

@@ -18,6 +18,8 @@ import type {
   DashboardSummary,
   EnrichedBooking,
   MediaAsset,
+  MediaContext,
+  MediaQuotaUsage,
   PaginatedResponse,
   PresignedUpload,
   PreviewTokenResponse,
@@ -632,17 +634,33 @@ export const bffClient = {
   deleteContentTag: (id: string) =>
     request<{ success: boolean }>('DELETE', `/api/content/tags/${encodeURIComponent(id)}`),
 
-  listMediaAssets: (params?: { page?: number; page_size?: number }) =>
-    request<PaginatedResponse<MediaAsset>>('GET', '/api/content/media', { query: params }),
+  // Transversal Media API (/api/media/*)
+  listMediaAssets: (params?: { context?: MediaContext | ''; page?: number; page_size?: number }) =>
+    request<PaginatedResponse<MediaAsset>>('GET', '/api/media', {
+      query: {
+        context: params?.context || undefined,
+        page: params?.page,
+        page_size: params?.page_size,
+      },
+    }),
+
+  getMediaQuota: async () => {
+    const res = await request<{ success: boolean; data: MediaQuotaUsage }>(
+      'GET',
+      '/api/media/quota',
+    );
+    return res.data;
+  },
 
   presignMediaUpload: async (payload: {
     file_name: string;
     mime_type: string;
     size_bytes: number;
+    context?: MediaContext;
   }) => {
     const res = await request<{ success: boolean; data: PresignedUpload }>(
       'POST',
-      '/api/content/media/presign',
+      '/api/media/presign',
       { body: payload },
     );
     return res.data;
@@ -650,32 +668,43 @@ export const bffClient = {
 
   confirmMediaUpload: async (payload: {
     asset_id: string;
-    file_name: string;
-    storage_key: string;
-    public_url?: string | null;
-    mime_type: string;
-    size_bytes: number;
     alt_text?: string | null;
+    width?: number | null;
+    height?: number | null;
+    metadata?: Record<string, unknown>;
   }) => {
     const res = await request<{ success: boolean; data: MediaAsset }>(
       'POST',
-      '/api/content/media/confirm',
+      '/api/media/confirm',
       { body: payload },
     );
     return res.data;
   },
 
-  updateMediaAsset: async (id: string, payload: { alt_text?: string | null }) => {
+  updateMediaAsset: async (
+    id: string,
+    payload: { alt_text?: string | null; context?: MediaContext },
+  ) => {
     const res = await request<{ success: boolean; data: MediaAsset }>(
       'PATCH',
-      `/api/content/media/${encodeURIComponent(id)}`,
+      `/api/media/${encodeURIComponent(id)}`,
       { body: payload },
     );
     return res.data;
   },
 
-  deleteMediaAsset: (id: string) =>
-    request<{ success: boolean }>('DELETE', `/api/content/media/${encodeURIComponent(id)}`),
+  deleteMediaAsset: (id: string, permanent = false) =>
+    request<{ success: boolean }>('DELETE', `/api/media/${encodeURIComponent(id)}`, {
+      query: permanent ? { permanent: 'true' } : undefined,
+    }),
+
+  restoreMediaAsset: async (id: string) => {
+    const res = await request<{ success: boolean; data: MediaAsset }>(
+      'POST',
+      `/api/media/${encodeURIComponent(id)}/restore`,
+    );
+    return res.data;
+  },
 
   listContentWebhooks: async () => {
     const res = await request<{ success: boolean; data: PublishWebhook[] }>(

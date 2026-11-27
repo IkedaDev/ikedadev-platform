@@ -1,6 +1,6 @@
 # Despliegue en GCP (Cloud Run + Artifact Registry + Neon + Cloudflare)
 
-Runbook operativo paso a paso para desplegar **`ikedadev-platform`** (6 microservicios Rust privados + Portal SaaS BFF `portal/bff` desplegado como `tenant-portal-bff` público + Portal Web `portal/web` en Cloudflare Pages) en **Google Cloud Platform** con costo fijo **\$0**, región única Tier 1 (`us-central1`), autenticación sin llaves JSON (**Workload Identity Federation**) y protección automática de facturación (**Billing Kill Switch**).
+Runbook operativo paso a paso para desplegar **`ikedadev-platform`** (8 microservicios Rust privados —incluyendo `content-api` y `media-api`— + Portal SaaS BFF `portal/bff` desplegado como `tenant-portal-bff` público + Portal Web `portal/web` en Cloudflare Pages) en **Google Cloud Platform** con costo fijo **\$0**, región única Tier 1 (`us-central1`), autenticación sin llaves JSON (**Workload Identity Federation**) y protección automática de facturación (**Billing Kill Switch**).
 
 ---
 

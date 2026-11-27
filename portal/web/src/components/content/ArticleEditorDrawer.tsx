@@ -4,27 +4,22 @@ import {
   Clock,
   Eye,
   History,
+  Image as ImageIcon,
   RotateCcw,
   Save,
   Send,
 } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import { bffClient } from '../../api/bffClient';
-import type {
-  Article,
-  ArticleRevision,
-  ContentCategory,
-  ContentTag,
-  MediaAsset,
-} from '../../types/api';
+import type { Article, ArticleRevision, ContentCategory, ContentTag } from '../../types/api';
 import { Button, Input, Select, StatusBadge, Textarea, formatDateTime, useToast } from '../../ui';
+import { useMediaPicker } from '../shared/MediaPickerModal';
 import { RichTextEditor } from './RichTextEditor';
 
 export interface ArticleEditorDrawerProps {
   article: Article | null;
   categories: ContentCategory[];
   tags: ContentTag[];
-  mediaAssets: MediaAsset[];
   authorName: string;
   canPublish: boolean;
   onSaved: () => void;
@@ -35,13 +30,13 @@ export function ArticleEditorDrawer({
   article,
   categories,
   tags,
-  mediaAssets,
   authorName,
   canPublish,
   onSaved,
   onClose,
 }: ArticleEditorDrawerProps) {
   const { toast } = useToast();
+  const { openMediaPicker } = useMediaPicker();
   const isLockedForStaff = Boolean(article && article.status !== 'DRAFT' && !canPublish);
 
   const [title, setTitle] = useState(article?.title ?? '');
@@ -231,7 +226,6 @@ export function ArticleEditorDrawer({
         <RichTextEditor
           initialContentJson={article?.content_json}
           initialContentHtml={article?.content_html}
-          mediaAssets={mediaAssets}
           disabled={isLockedForStaff}
           onChange={({ json, html }) => {
             setContentJson(json);
@@ -308,28 +302,32 @@ export function ArticleEditorDrawer({
             )}
 
             <div className="stack-xs">
-              <Input
-                label="Imagen de portada (URL externa https:// o desde Biblioteca de Medios)"
-                disabled={isLockedForStaff}
-                value={coverImageUrl}
-                onChange={(e) => setCoverImageUrl(e.target.value)}
-                placeholder="https://media.ejemplo.com/portada.webp"
-              />
-              {!isLockedForStaff && mediaAssets.length > 0 && (
-                <div className="media-picker-strip">
-                  {mediaAssets.slice(0, 6).map((asset) => (
-                    <button
-                      key={asset.id}
-                      type="button"
-                      className="media-picker-thumb"
-                      onClick={() => setCoverImageUrl(asset.public_url)}
-                      title={`Usar ${asset.file_name}`}
-                    >
-                      <img src={asset.public_url} alt={asset.alt_text || asset.file_name} />
-                    </button>
-                  ))}
-                </div>
-              )}
+              <div className="row-sm">
+                <Input
+                  label="Imagen de portada"
+                  disabled={isLockedForStaff}
+                  value={coverImageUrl}
+                  onChange={(e) => setCoverImageUrl(e.target.value)}
+                  placeholder="https://media.ejemplo.com/portada.webp"
+                />
+                {!isLockedForStaff && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    icon={<ImageIcon size={14} />}
+                    onClick={() =>
+                      openMediaPicker({
+                        context: 'content',
+                        title: 'Elegir imagen de portada',
+                        onSelect: (url) => setCoverImageUrl(url),
+                      })
+                    }
+                  >
+                    Galería
+                  </Button>
+                )}
+              </div>
             </div>
 
             <div className="form-grid-2">

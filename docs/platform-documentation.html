@@ -378,6 +378,7 @@
       <a class="nav-link" href="#bookings-api">bookings-api <span class="badge b-green">:8084</span></a>
       <a class="nav-link" href="#telemetry-api">telemetry-api <span class="badge b-blue">:8085</span></a>
       <a class="nav-link" href="#content-api">content-api <span class="badge b-green">:8086</span></a>
+      <a class="nav-link" href="#media-api">media-api <span class="badge b-purple">:8087</span></a>
     </nav>
 
     <nav class="nav-group">
@@ -772,7 +773,25 @@
           <tr><td><code>PATCH /v1/articles/{id}</code> · <code>PATCH /v1/articles/{id}/status</code></td><td>Edición con RBAC estricto (<code>staff</code> solo edita <code>DRAFT</code>), snapshots automáticos en <code>article_revisions</code> y publicación/programación QStash + Deploy Hooks.</td></tr>
           <tr><td><code>POST /v1/articles/{id}/preview-token</code> · <code>GET /v1/articles/preview</code></td><td>Vista previa temporal de borradores (30 min) mediante token HMAC/JWT firmado sin <code>TenantContext</code>.</td></tr>
           <tr><td><code>POST /v1/internal/qstash/publish</code></td><td>Callback interno verificado con <code>Upstash-Signature</code> para publicar artículos programados.</td></tr>
-          <tr><td><code>/v1/categories</code> · <code>/v1/tags</code> · <code>/v1/media/*</code> · <code>/v1/webhooks/*</code></td><td>Taxonomías, URLs prefirmadas Cloudflare R2 (<code>R2_PLATFORM</code>) y Deploy Hooks SSG.</td></tr>
+          <tr><td><code>/v1/categories</code> · <code>/v1/tags</code> · <code>/v1/webhooks/*</code></td><td>Taxonomías editoriales y Deploy Hooks SSG.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Media API -->
+    <section id="media-api">
+      <h2>6c-ter. Microservicio: <code>services/media-api</code> <span class="badge b-purple">Puerto 8087</span></h2>
+      <p>
+        Servicio transversal de gestión multimedia multi-tenant sobre <code>media_db</code> con <code>ENABLE</code> + <code>FORCE ROW LEVEL SECURITY</code> (tablas <code>media_assets</code> y <code>tenant_quotas</code>). Desacoplado de <code>content-api</code> para servir a Blog, Catálogo, Branding y Avatares con cuotas por tenant, RBAC estricto (<code>media:read</code>, <code>media:write</code>, <code>media:delete</code>, protección exclusiva de <code>branding</code> para <code>tenant:admin</code>), Soft Delete + restauración y almacenamiento Cloudflare R2 / BYOS.
+      </p>
+      <table>
+        <thead>
+          <tr><th>Método y Ruta</th><th>Funcionalidad Principal</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>POST /v1/media/presign</code> · <code>POST /v1/media/confirm</code></td><td>Valida MIME/extensión, cuota del tenant y genera Presigned PUT URL segura (<code>tenants/{tenant_id}/{context}/{uuid}.{ext}</code>).</td></tr>
+          <tr><td><code>GET /v1/media</code> · <code>POST /v1/media/search</code> · <code>GET /v1/media/quota</code></td><td>Galería paginada, búsqueda <code>Criteria</code> (incluyendo <code>metadata.*</code>) y consumo de cuota.</td></tr>
+          <tr><td><code>PATCH /v1/media/{id}</code> · <code>DELETE /v1/media/{id}</code> · <code>POST /v1/media/{id}/restore</code></td><td>Edición de metadatos, Soft Delete con período de gracia, restauración y purga física (<code>?permanent=true</code>).</td></tr>
         </tbody>
       </table>
     </section>
@@ -1035,8 +1054,9 @@ docker compose --profile full --profile observability up -d --build</code></pre>
           <tr><td><code>catalog-api.yml</code></td><td>Push con filtro <code>paths:</code> de <code>catalog-api</code> + <code>ikeda-core</code></td><td>Build &amp; Push independiente con <code>scope=catalog-api</code> y Short SHA.</td></tr>
           <tr><td><code>bookings-api.yml</code></td><td>Push con filtro <code>paths:</code> de <code>bookings-api</code> + <code>ikeda-core</code></td><td>Build &amp; Push independiente con <code>scope=bookings-api</code> y Short SHA.</td></tr>
           <tr><td><code>telemetry-api.yml</code></td><td>Push con filtro <code>paths:</code> de <code>telemetry-api</code> + <code>ikeda-core</code></td><td>Build &amp; Push independiente con <code>scope=telemetry-api</code>, <code>LOG_FORMAT=json</code> y despliegue privado en Cloud Run.</td></tr>
-          <tr><td><code>content-api.yml</code></td><td>Push con filtro <code>paths:</code> de <code>content-api</code> + <code>ikeda-core</code></td><td>Build &amp; Push independiente con <code>scope=content-api</code>, <code>LOG_FORMAT=json</code>, R2/QStash opcionales y despliegue privado en Cloud Run.</td></tr>
-          <tr><td><code>portal-bff.yml</code></td><td>Push con filtro <code>paths:</code> de <code>portal/bff/**</code></td><td>Build Node 22 Alpine desde <code>portal/bff</code> y despliegue en Cloud Run manteniendo <code>tenant-portal-bff-qa</code> / <code>tenant-portal-bff-prod</code> (con <code>PLATFORM_ADMIN_API_KEY</code> opcional, <code>TELEMETRY_API_URL</code> y <code>CONTENT_API_URL</code>).</td></tr>
+          <tr><td><code>content-api.yml</code></td><td>Push con filtro <code>paths:</code> de <code>content-api</code> + <code>ikeda-core</code></td><td>Build &amp; Push independiente con <code>scope=content-api</code>, <code>LOG_FORMAT=json</code>, QStash opcional y despliegue privado en Cloud Run.</td></tr>
+          <tr><td><code>media-api.yml</code></td><td>Push con filtro <code>paths:</code> de <code>media-api</code> + <code>ikeda-core</code></td><td>Build &amp; Push independiente con <code>scope=media-api</code>, <code>LOG_FORMAT=json</code>, Cloudflare R2 y despliegue privado en Cloud Run.</td></tr>
+          <tr><td><code>portal-bff.yml</code></td><td>Push con filtro <code>paths:</code> de <code>portal/bff/**</code></td><td>Build Node 22 Alpine desde <code>portal/bff</code> y despliegue en Cloud Run manteniendo <code>tenant-portal-bff-qa</code> / <code>tenant-portal-bff-prod</code> (con <code>PLATFORM_ADMIN_API_KEY</code> opcional, <code>TELEMETRY_API_URL</code>, <code>CONTENT_API_URL</code> y <code>MEDIA_API_URL</code>).</td></tr>
         </tbody>
       </table>
 

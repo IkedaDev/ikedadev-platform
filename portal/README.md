@@ -1,6 +1,6 @@
 # IkedaDev SaaS Portal (`portal/bff` + `portal/web`)
 
-Portal administrativo multi-tenant promovido como aplicación de primera clase dentro de `ikedadev-platform`. Integra de punta a punta los **7 microservicios en Rust** (`events-api`, `crm-api`, `identity-api`, `catalog-api`, `bookings-api`, `telemetry-api` y `content-api`) con **autenticación OIDC de producción mediante Keycloak**, **Design System Kropy** con personalización dinámica por tenant (`tenants.config`), editor visual **TipTap** para Blog/CMS, trazabilidad `X-Request-Id` y telemetría/auditoría en tiempo real.
+Portal administrativo multi-tenant promovido como aplicación de primera clase dentro de `ikedadev-platform`. Integra de punta a punta los **8 microservicios en Rust** (`events-api`, `crm-api`, `identity-api`, `catalog-api`, `bookings-api`, `telemetry-api`, `content-api` y `media-api`) con **autenticación OIDC de producción mediante Keycloak**, **Design System Kropy** con personalización dinámica por tenant (`tenants.config`), editor visual **TipTap** para Blog/CMS, Biblioteca de Medios transversal (`media-api`), trazabilidad `X-Request-Id` y telemetría/auditoría en tiempo real.
 
 ---
 
@@ -23,7 +23,8 @@ Portal BFF (portal/bff — Hono + Zod + Node 22 :4000)
         ├──► catalog-api   (:8083)  Valida RS256 JWKS + claim `tenant_id` (RLS)
         ├──► bookings-api  (:8084)  Reservas multi-servicio (snapshots + estados + idempotencia)
         ├──► telemetry-api (:8085)  Eventos append-only (`TRACKING` / `AUDIT`), timeline y métricas (RLS)
-        └──► content-api   (:8086)  Headless CMS (Artículos TipTap, Media Library R2/BYOS, SSR+SSG, RLS)
+        ├──► content-api   (:8086)  Headless CMS (Artículos TipTap, SSR+SSG, Deploy Hooks, RLS)
+        └──► media-api     (:8087)  Biblioteca de Medios transversal (Cloudflare R2/BYOS, cuotas, RLS)
 ```
 
 ---

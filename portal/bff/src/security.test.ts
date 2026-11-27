@@ -28,6 +28,8 @@ import { bookingsRoutes } from './routes/bookings.js';
 import { clientsRoutes } from './routes/clients.js';
 import { contentRoutes } from './routes/content.js';
 import { identityRoutes } from './routes/identity.js';
+import { mediaRoutes } from './routes/media.js';
+import { requireAuth } from './middleware/auth.js';
 import {
   cacheTenantBranding,
   clearSlugBrandingCacheForTest,
@@ -776,7 +778,6 @@ describe('[BFF-10] Content CMS Routes — Bearer-Only Auth & Strict UUID Validat
       ['DELETE', '/api/content/articles/not-a-uuid'],
       ['PATCH', '/api/content/categories/bad-id'],
       ['DELETE', '/api/content/tags/bad-id'],
-      ['DELETE', '/api/content/media/bad-id'],
       ['POST', '/api/content/webhooks/bad-id/test'],
     ] as const) {
       const res = await app.request(path, {
@@ -815,6 +816,87 @@ describe('[BFF-10] Content CMS Routes — Bearer-Only Auth & Strict UUID Validat
     assert.equal(res.status, 200);
     const headerKeysLower = Object.keys(capturedHeaders).map((k) => k.toLowerCase());
     assert.equal(capturedHeaders['Authorization'], 'Bearer user-content-jwt');
+    assert.equal(headerKeysLower.includes('x-api-key'), false);
+  });
+});
+
+describe('[BFF-11] Media API Routes — Auth Guard, Bearer-Only & UUID Validation', () => {
+  it('blocks unauthenticated requests to /api/media with 401 when protected by requireAuth', async () => {
+    const app = new Hono();
+    app.use('/api/media/*', requireAuth);
+    app.route('/api/media', mediaRoutes);
+
+    const res = await app.request('/api/media');
+    assert.equal(res.status, 401);
+  });
+
+  it('rejects non-UUID path parameters with 422 before calling media-api', async () => {
+    let fetchCalled = false;
+    globalThis.fetch = (async () => {
+      fetchCalled = true;
+      return new Response(JSON.stringify({ success: true, data: {} }), { status: 200 });
+    }) as typeof fetch;
+
+    const app = new Hono();
+    app.use('/api/media/*', async (c, next) => {
+      c.set('tenantId' as never, TENANT_A_ID as never);
+      c.set('roles' as never, ['tenant:admin'] as never);
+      c.set('authMethod' as never, 'session' as never);
+      c.set('authorization' as never, 'Bearer user-media-jwt' as never);
+      await next();
+    });
+    app.route('/api/media', mediaRoutes);
+
+    for (const [method, path] of [
+      ['GET', '/api/media/bad-id'],
+      ['PATCH', '/api/media/bad-id'],
+      ['DELETE', '/api/media/bad-id'],
+      ['POST', '/api/media/bad-id/restore'],
+    ] as const) {
+      const res = await app.request(path, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: method === 'PATCH' ? JSON.stringify({ alt_text: 'x' }) : undefined,
+      });
+      assert.equal(res.status, 422, `Expected 422 on ${method} ${path}`);
+    }
+    assert.equal(fetchCalled, false);
+  });
+
+  it('forwards only Bearer token (never X-Api-Key) to media-api', async () => {
+    let capturedHeaders: Record<string, string> = {};
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      capturedHeaders = (init?.headers ?? {}) as Record<string, string>;
+      return new Response(
+        JSON.stringify({
+          success: true,
+          data: {
+            used_bytes: 0,
+            max_bytes: 524288000,
+            available_bytes: 524288000,
+            max_file_size_bytes: 5242880,
+            asset_count: 0,
+            usage_percent: 0,
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as typeof fetch;
+
+    const app = new Hono();
+    app.use('/api/media/*', async (c, next) => {
+      c.set('tenantId' as never, TENANT_A_ID as never);
+      c.set('roles' as never, ['tenant:admin'] as never);
+      c.set('authMethod' as never, 'session' as never);
+      c.set('authorization' as never, 'Bearer user-media-jwt' as never);
+      await next();
+    });
+    app.route('/api/media', mediaRoutes);
+
+    const res = await app.request('/api/media/quota');
+    assert.equal(res.status, 200);
+    const headerKeysLower = Object.keys(capturedHeaders).map((k) => k.toLowerCase());
+    assert.equal(capturedHeaders['Authorization'], 'Bearer user-media-jwt');
     assert.equal(headerKeysLower.includes('x-api-key'), false);
   });
 });

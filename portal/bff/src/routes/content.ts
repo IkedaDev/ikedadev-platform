@@ -70,26 +70,6 @@ const createTagSchema = z.object({
   slug: z.string().trim().max(100).optional(),
 });
 
-const presignMediaSchema = z.object({
-  file_name: z.string().trim().min(1).max(255),
-  mime_type: z.enum(['image/webp', 'image/jpeg', 'image/png', 'image/avif']),
-  size_bytes: z.coerce.number().int().positive().max(5 * 1024 * 1024),
-});
-
-const confirmMediaSchema = z.object({
-  asset_id: z.string().uuid(),
-  file_name: z.string().trim().min(1).max(255),
-  storage_key: z.string().trim().min(1),
-  public_url: z.string().url().optional().nullable(),
-  mime_type: z.enum(['image/webp', 'image/jpeg', 'image/png', 'image/avif']),
-  size_bytes: z.coerce.number().int().positive().max(5 * 1024 * 1024),
-  alt_text: z.string().max(255).optional().nullable(),
-});
-
-const updateMediaSchema = z.object({
-  alt_text: z.string().max(255).optional().nullable(),
-});
-
 const createWebhookSchema = z.object({
   name: z.string().trim().min(1, 'El nombre es obligatorio').max(150),
   target_url: z.string().url('URL inválida'),
@@ -459,95 +439,6 @@ contentRoutes.delete('/tags/:id', async (c) => {
   }
   const ctx = getCtx(c);
   await contentClient.deleteTag(id, ctx);
-  return c.json({ success: true });
-});
-
-// ============================================================================
-// Media Library
-// ============================================================================
-
-contentRoutes.get('/media', async (c) => {
-  const ctx = getCtx(c);
-  const page = Math.max(1, Number(c.req.query('page') ?? 1) || 1);
-  const pageSize = Math.min(100, Math.max(1, Number(c.req.query('page_size') ?? 24) || 24));
-  const res = await contentClient.listMedia(page, pageSize, ctx);
-  return c.json(res);
-});
-
-contentRoutes.post('/media/presign', async (c) => {
-  const raw = await c.req.json().catch(() => null);
-  const parsed = presignMediaSchema.safeParse(raw);
-  if (!parsed.success) {
-    return c.json(
-      {
-        success: false,
-        code: 'VALIDATION_ERROR',
-        message: 'Solicitud de presign inválida (solo WebP/JPEG/PNG/AVIF hasta 5 MB)',
-        details: parsed.error.flatten().fieldErrors,
-      },
-      422,
-    );
-  }
-  const ctx = getCtx(c);
-  const data = await contentClient.presignMedia(parsed.data, ctx);
-  return c.json({ success: true, data });
-});
-
-contentRoutes.post('/media/confirm', async (c) => {
-  const raw = await c.req.json().catch(() => null);
-  const parsed = confirmMediaSchema.safeParse(raw);
-  if (!parsed.success) {
-    return c.json(
-      {
-        success: false,
-        code: 'VALIDATION_ERROR',
-        message: 'Confirmación de medio inválida',
-        details: parsed.error.flatten().fieldErrors,
-      },
-      422,
-    );
-  }
-  const ctx = getCtx(c);
-  const data = await contentClient.confirmMedia(parsed.data, ctx);
-  return c.json({ success: true, data }, 201);
-});
-
-contentRoutes.patch('/media/:id', async (c) => {
-  const id = c.req.param('id');
-  if (!isValidUuid(id)) {
-    return c.json(
-      { success: false, code: 'VALIDATION_ERROR', message: 'ID de medio inválido' },
-      422,
-    );
-  }
-  const raw = await c.req.json().catch(() => null);
-  const parsed = updateMediaSchema.safeParse(raw);
-  if (!parsed.success) {
-    return c.json(
-      {
-        success: false,
-        code: 'VALIDATION_ERROR',
-        message: 'Datos de medio inválidos',
-        details: parsed.error.flatten().fieldErrors,
-      },
-      422,
-    );
-  }
-  const ctx = getCtx(c);
-  const data = await contentClient.updateMedia(id, parsed.data, ctx);
-  return c.json({ success: true, data });
-});
-
-contentRoutes.delete('/media/:id', async (c) => {
-  const id = c.req.param('id');
-  if (!isValidUuid(id)) {
-    return c.json(
-      { success: false, code: 'VALIDATION_ERROR', message: 'ID de medio inválido' },
-      422,
-    );
-  }
-  const ctx = getCtx(c);
-  await contentClient.deleteMedia(id, ctx);
   return c.json({ success: true });
 });
 

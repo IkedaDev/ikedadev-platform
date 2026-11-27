@@ -16,35 +16,23 @@ import {
   Quote,
 } from 'lucide-react';
 import { useState } from 'react';
-import type { MediaAsset } from '../../types/api';
 import { Button, Input } from '../../ui';
+import { isSafeMediaUrl, useMediaPicker } from '../shared/MediaPickerModal';
 
 export interface RichTextEditorProps {
   initialContentJson?: Record<string, unknown>;
   initialContentHtml?: string;
-  mediaAssets?: MediaAsset[];
   disabled?: boolean;
   onChange: (payload: { json: Record<string, unknown>; html: string }) => void;
-}
-
-function isSafeHttpUrl(raw: string): boolean {
-  try {
-    const u = new URL(raw.trim());
-    return u.protocol === 'https:' || u.protocol === 'http:';
-  } catch {
-    return false;
-  }
 }
 
 export function RichTextEditor({
   initialContentJson,
   initialContentHtml,
-  mediaAssets = [],
   disabled = false,
   onChange,
 }: RichTextEditorProps) {
-  const [imagePanelOpen, setImagePanelOpen] = useState(false);
-  const [externalImageUrl, setExternalImageUrl] = useState('');
+  const { openMediaPicker } = useMediaPicker();
   const [linkPanelOpen, setLinkPanelOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
 
@@ -87,21 +75,19 @@ export function RichTextEditor({
     return null;
   }
 
-  const handleInsertExternalImage = () => {
-    const trimmed = externalImageUrl.trim();
-    if (!isSafeHttpUrl(trimmed)) return;
-    editor.chain().focus().setImage({ src: trimmed }).run();
-    setExternalImageUrl('');
-    setImagePanelOpen(false);
-  };
-
-  const handleSelectMediaImage = (asset: MediaAsset) => {
-    editor
-      .chain()
-      .focus()
-      .setImage({ src: asset.public_url, alt: asset.alt_text || asset.file_name })
-      .run();
-    setImagePanelOpen(false);
+  const handleOpenImagePicker = () => {
+    setLinkPanelOpen(false);
+    openMediaPicker({
+      context: 'content',
+      title: 'Insertar imagen en el artículo',
+      onSelect: (url, asset) => {
+        editor
+          .chain()
+          .focus()
+          .setImage({ src: url, alt: asset?.alt_text || asset?.file_name || '' })
+          .run();
+      },
+    });
   };
 
   const handleApplyLink = () => {
@@ -111,7 +97,7 @@ export function RichTextEditor({
       setLinkPanelOpen(false);
       return;
     }
-    if (!isSafeHttpUrl(trimmed)) return;
+    if (!isSafeMediaUrl(trimmed)) return;
     editor.chain().focus().extendMarkRange('link').setLink({ href: trimmed }).run();
     setLinkUrl('');
     setLinkPanelOpen(false);
@@ -192,7 +178,6 @@ export function RichTextEditor({
             type="button"
             className={`tiptap-tool ${editor.isActive('link') || linkPanelOpen ? 'is-active' : ''}`}
             onClick={() => {
-              setImagePanelOpen(false);
               setLinkUrl((editor.getAttributes('link').href as string) || '');
               setLinkPanelOpen((v) => !v);
             }}
@@ -202,12 +187,9 @@ export function RichTextEditor({
           </button>
           <button
             type="button"
-            className={`tiptap-tool ${imagePanelOpen ? 'is-active' : ''}`}
-            onClick={() => {
-              setLinkPanelOpen(false);
-              setImagePanelOpen((v) => !v);
-            }}
-            title="Insertar imagen (Media Library o URL externa)"
+            className="tiptap-tool"
+            onClick={handleOpenImagePicker}
+            title="Insertar imagen (Biblioteca de Medios o URL externa)"
           >
             <ImageIcon size={15} />
           </button>
@@ -229,44 +211,6 @@ export function RichTextEditor({
               Cancelar
             </Button>
           </div>
-        </div>
-      )}
-
-      {imagePanelOpen && !disabled && (
-        <div className="tiptap-popover stack-sm">
-          <div className="row-sm">
-            <Input
-              placeholder="URL externa de imagen (https://...)"
-              value={externalImageUrl}
-              onChange={(e) => setExternalImageUrl(e.target.value)}
-            />
-            <Button
-              size="sm"
-              variant="primary"
-              disabled={!isSafeHttpUrl(externalImageUrl)}
-              onClick={handleInsertExternalImage}
-            >
-              Insertar URL
-            </Button>
-          </div>
-          {mediaAssets.length > 0 && (
-            <div className="stack-xs">
-              <span className="text-xs text-muted">O selecciona desde la Biblioteca de Medios:</span>
-              <div className="media-picker-strip">
-                {mediaAssets.slice(0, 8).map((asset) => (
-                  <button
-                    key={asset.id}
-                    type="button"
-                    className="media-picker-thumb"
-                    onClick={() => handleSelectMediaImage(asset)}
-                    title={asset.alt_text || asset.file_name}
-                  >
-                    <img src={asset.public_url} alt={asset.alt_text || asset.file_name} />
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       )}
 

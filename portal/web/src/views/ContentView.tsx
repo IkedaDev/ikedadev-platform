@@ -4,7 +4,6 @@ import {
   FilePlus2,
   FileText,
   FolderTree,
-  Image as ImageIcon,
   Pencil,
   Send,
   Trash2,
@@ -13,7 +12,6 @@ import {
 import { useCallback, useEffect, useState } from 'react';
 import { bffClient } from '../api/bffClient';
 import { ArticleEditorDrawer } from '../components/content/ArticleEditorDrawer';
-import { MediaLibraryTab } from '../components/content/MediaLibraryTab';
 import { TaxonomyTab } from '../components/content/TaxonomyTab';
 import { WebhooksTab } from '../components/content/WebhooksTab';
 import type {
@@ -22,7 +20,6 @@ import type {
   AuthUser,
   ContentCategory,
   ContentTag,
-  MediaAsset,
   PublishWebhook,
 } from '../types/api';
 import {
@@ -37,7 +34,7 @@ import {
   type StatusTone,
 } from '../ui';
 
-type ContentTab = 'articles' | 'taxonomy' | 'media' | 'webhooks';
+type ContentTab = 'articles' | 'taxonomy' | 'webhooks';
 
 const STATUS_BADGE: Record<ArticleStatus, { label: string; tone: StatusTone }> = {
   DRAFT: { label: 'Borrador', tone: 'gray' },
@@ -70,8 +67,6 @@ export function ContentView({ user }: ContentViewProps) {
 
   const [categories, setCategories] = useState<ContentCategory[]>([]);
   const [tags, setTags] = useState<ContentTag[]>([]);
-  const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
-  const [mediaLoading, setMediaLoading] = useState(false);
   const [webhooks, setWebhooks] = useState<PublishWebhook[]>([]);
   const [webhooksLoading, setWebhooksLoading] = useState(false);
 
@@ -109,18 +104,6 @@ export function ContentView({ user }: ContentViewProps) {
     }
   }, []);
 
-  const loadMedia = useCallback(async () => {
-    setMediaLoading(true);
-    try {
-      const res = await bffClient.listMediaAssets({ page: 1, page_size: 48 });
-      setMediaAssets(res.data);
-    } catch {
-      // handled
-    } finally {
-      setMediaLoading(false);
-    }
-  }, []);
-
   const loadWebhooks = useCallback(async () => {
     if (!canPublish) return;
     setWebhooksLoading(true);
@@ -140,8 +123,7 @@ export function ContentView({ user }: ContentViewProps) {
 
   useEffect(() => {
     void loadTaxonomy();
-    void loadMedia();
-  }, [loadTaxonomy, loadMedia]);
+  }, [loadTaxonomy]);
 
   useEffect(() => {
     if (tab === 'webhooks' && canPublish) {
@@ -161,7 +143,6 @@ export function ContentView({ user }: ContentViewProps) {
           article={article}
           categories={categories}
           tags={tags}
-          mediaAssets={mediaAssets}
           authorName={user.name || user.email}
           canPublish={canPublish}
           onSaved={() => void loadArticles()}
@@ -359,16 +340,6 @@ export function ContentView({ user }: ContentViewProps) {
           <FolderTree size={15} />
           <span>Categorías y Etiquetas</span>
         </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'media'}
-          className={`content-tab ${tab === 'media' ? 'is-active' : ''}`}
-          onClick={() => setTab('media')}
-        >
-          <ImageIcon size={15} />
-          <span>Biblioteca de Medios</span>
-        </button>
         {canPublish && (
           <button
             type="button"
@@ -426,14 +397,6 @@ export function ContentView({ user }: ContentViewProps) {
           categories={categories}
           tags={tags}
           onRefresh={() => void loadTaxonomy()}
-        />
-      )}
-
-      {tab === 'media' && (
-        <MediaLibraryTab
-          assets={mediaAssets}
-          loading={mediaLoading}
-          onRefresh={() => void loadMedia()}
         />
       )}
 

@@ -33,6 +33,7 @@ services:
       - ./services/bookings-api/migrations:/migrations/bookings:ro
       - ./services/telemetry-api/migrations:/migrations/telemetry:ro
       - ./services/content-api/migrations:/migrations/content:ro
+      - ./services/media-api/migrations:/migrations/media:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d identity_db"]
       interval: 3s
@@ -229,6 +230,37 @@ services:
       RUST_LOG: "info,content_api=debug,tower_http=info"
     ports:
       - "127.0.0.1:8086:8086"
+
+  # ============================================================================
+  # 9. Media API (Rust Axum Transversal Media Service - Port 8087)
+  #    Profiles: media | apis | full
+  # ============================================================================
+  media-api:
+    container_name: ikedadev-media-api
+    profiles: ["media", "apis", "full"]
+    build:
+      context: .
+      dockerfile: services/media-api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: "8087"
+      HOST: "0.0.0.0"
+      DATABASE_URL: "postgres://${IKEDA_APP_USER:-ikeda_app}:${IKEDA_APP_PASSWORD:-ikeda_app_password}@postgres:5432/media_db?sslmode=disable"
+      IDENTITY_DATABASE_URL: "postgres://${IKEDA_APP_USER:-ikeda_app}:${IKEDA_APP_PASSWORD:-ikeda_app_password}@postgres:5432/identity_db?sslmode=disable"
+      JWKS_URI: "${JWKS_URI:-http://keycloak:8080/realms/ikeda/protocol/openid-connect/certs}"
+      JWT_ISSUER: "${JWT_ISSUER:-http://localhost:8180/realms/ikeda}"
+      ALLOW_LOCAL_MEDIA_STORAGE: "${ALLOW_LOCAL_MEDIA_STORAGE:-true}"
+      LOCAL_MEDIA_BASE_URL: "${LOCAL_MEDIA_BASE_URL:-http://localhost:8087/v1/media/local}"
+      LOCAL_MEDIA_DIR: "/tmp/ikeda-media-local"
+      LOCAL_MEDIA_SIGNING_SECRET: "${LOCAL_MEDIA_SIGNING_SECRET:-dev-local-media-hmac-secret-change-me}"
+      LOCAL_CORS_ORIGIN: "${LOCAL_CORS_ORIGIN:-http://localhost:5173}"
+      LOG_FORMAT: "${LOG_FORMAT:-json}"
+      RUST_LOG: "info,media_api=debug,tower_http=info"
+    ports:
+      - "127.0.0.1:8087:8087"
 
   # ============================================================================
   # 8. Keycloak Dev Server with Auto-Imported `ikeda` Realm (Port 8180)

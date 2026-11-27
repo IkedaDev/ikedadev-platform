@@ -9,6 +9,7 @@ members = [
     "services/bookings-api",
     "services/telemetry-api",
     "services/content-api",
+    "services/media-api",
 ]
 
 [workspace.package]

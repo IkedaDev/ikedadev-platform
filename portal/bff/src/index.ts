@@ -11,6 +11,7 @@ import { crmClient } from './clients/crmClient.js';
 import { eventsClient } from './clients/eventsClient.js';
 import { UpstreamApiError } from './clients/http.js';
 import { identityClient } from './clients/identityClient.js';
+import { mediaClient } from './clients/mediaClient.js';
 import { telemetryClient } from './clients/telemetryClient.js';
 import { config, parseAllowedOrigins, resolveCorsOrigin } from './config.js';
 import { requireAuth } from './middleware/auth.js';
@@ -23,6 +24,7 @@ import { clientsRoutes } from './routes/clients.js';
 import { contentRoutes } from './routes/content.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { identityRoutes } from './routes/identity.js';
+import { mediaRoutes } from './routes/media.js';
 import { publicBrandingRoutes, settingsRoutes } from './routes/settings.js';
 import { telemetryRoutes } from './routes/telemetry.js';
 
@@ -45,7 +47,7 @@ app.use(
 
 // Public Health endpoint with upstream microservice & Keycloak checks
 app.get('/health', async (c) => {
-  const [events, crm, identity, catalog, bookings, telemetry, content, keycloak] =
+  const [events, crm, identity, catalog, bookings, telemetry, content, media, keycloak] =
     await Promise.all([
       eventsClient.health(),
       crmClient.health(),
@@ -54,10 +56,11 @@ app.get('/health', async (c) => {
       bookingsClient.health(),
       telemetryClient.health(),
       contentClient.health(),
+      mediaClient.health(),
       checkKeycloakHealth(),
     ]);
 
-  const services = { events, crm, identity, catalog, bookings, telemetry, content, keycloak };
+  const services = { events, crm, identity, catalog, bookings, telemetry, content, media, keycloak };
   const allHealthy = Object.values(services).every((s) => s.ok);
 
   return c.json({
@@ -88,6 +91,7 @@ app.route('/api/calendars', calendarsRoutes);
 app.route('/api/identity', identityRoutes);
 app.route('/api/telemetry', telemetryRoutes);
 app.route('/api/content', contentRoutes);
+app.route('/api/media', mediaRoutes);
 
 app.notFound((c) =>
   c.json(
@@ -145,5 +149,6 @@ serve(
     console.log(`   BOOKINGS_API_URL:  ${config.BOOKINGS_API_URL}`);
     console.log(`   TELEMETRY_API_URL: ${config.TELEMETRY_API_URL}`);
     console.log(`   CONTENT_API_URL:   ${config.CONTENT_API_URL}`);
+    console.log(`   MEDIA_API_URL:     ${config.MEDIA_API_URL}`);
   },
 );

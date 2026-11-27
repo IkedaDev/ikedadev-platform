@@ -357,16 +357,3 @@ pub fn validate_webhook_events(events: &[String]) -> Result<Vec<String>, AppErro
     }
     Ok(normalized)
 }
-
-/// Maps an allowed image MIME type to its canonical file extension.
-pub fn extension_for_mime(mime_type: &str) -> Result<&'static str, AppError> {
-    match mime_type.trim().to_ascii_lowercase().as_str() {
-        "image/webp" => Ok("webp"),
-        "image/jpeg" => Ok("jpg"),
-        "image/png" => Ok("png"),
-        "image/avif" => Ok("avif"),
-        other => Err(AppError::BadRequest(format!(
-            "Unsupported media MIME type '{other}'. Allowed: image/webp, image/jpeg, image/png, image/avif"
-        ))),
-    }
-}

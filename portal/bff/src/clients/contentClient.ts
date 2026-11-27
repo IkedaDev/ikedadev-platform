@@ -6,9 +6,7 @@ import type {
   ContentCategory,
   ContentTag,
   Criteria,
-  MediaAsset,
   PaginatedApiResponse,
-  PresignedUpload,
   PreviewTokenResponse,
   PublishWebhook,
   WebhookTestResult,
@@ -142,44 +140,6 @@ export const contentClient = {
 
   deleteTag(id: string, ctx?: RequestContext): Promise<void> {
     return http.request<void>('DELETE', `/v1/tags/${encodeURIComponent(id)}`, { ctx });
-  },
-
-  // Media Library
-  presignMedia(
-    payload: { file_name: string; mime_type: string; size_bytes: number },
-    ctx?: RequestContext,
-  ): Promise<PresignedUpload> {
-    return http.requestData<PresignedUpload>('POST', '/v1/media/presign', { body: payload, ctx });
-  },
-
-  confirmMedia(payload: Record<string, unknown>, ctx?: RequestContext): Promise<MediaAsset> {
-    return http.requestData<MediaAsset>('POST', '/v1/media/confirm', { body: payload, ctx });
-  },
-
-  listMedia(
-    page = 1,
-    pageSize = 24,
-    ctx?: RequestContext,
-  ): Promise<PaginatedApiResponse<MediaAsset>> {
-    return http.request<PaginatedApiResponse<MediaAsset>>('GET', '/v1/media', {
-      query: { page, page_size: pageSize },
-      ctx,
-    });
-  },
-
-  updateMedia(
-    id: string,
-    payload: { alt_text?: string | null },
-    ctx?: RequestContext,
-  ): Promise<MediaAsset> {
-    return http.requestData<MediaAsset>('PATCH', `/v1/media/${encodeURIComponent(id)}`, {
-      body: payload,
-      ctx,
-    });
-  },
-
-  deleteMedia(id: string, ctx?: RequestContext): Promise<void> {
-    return http.request<void>('DELETE', `/v1/media/${encodeURIComponent(id)}`, { ctx });
   },
 
   // Deploy Hooks (SSG)

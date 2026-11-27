@@ -48,6 +48,7 @@ export interface BffHealth {
     bookings?: { ok: boolean; status: number };
     telemetry?: { ok: boolean; status: number };
     content?: { ok: boolean; status: number };
+    media?: { ok: boolean; status: number };
     keycloak?: { ok: boolean; status: number };
   };
 }
@@ -389,27 +390,46 @@ export interface PreviewTokenResponse {
   preview_path: string;
 }
 
+export type MediaContext = 'general' | 'branding' | 'catalog' | 'content' | 'avatars';
+export type MediaStatus = 'PENDING' | 'READY';
+
 export interface MediaAsset {
   id: string;
   tenant_id: string;
   storage_provider: string;
+  context: MediaContext;
+  status: MediaStatus;
   file_name: string;
   storage_key: string;
   public_url: string;
   mime_type: string;
   size_bytes: number;
+  width: number | null;
+  height: number | null;
   alt_text: string | null;
+  metadata: Record<string, unknown>;
   uploaded_by: string | null;
   created_at: string;
+  updated_at: string;
 }
 
 export interface PresignedUpload {
   asset_id: string;
   storage_provider: string;
+  context: MediaContext;
   storage_key: string;
   upload_url: string;
   public_url: string;
-  expires_in_seconds: number;
+  expires_in_secs: number;
+}
+
+export interface MediaQuotaUsage {
+  used_bytes: number;
+  max_bytes: number;
+  available_bytes: number;
+  max_file_size_bytes: number;
+  asset_count: number;
+  usage_percent: number;
 }
 
 export interface PublishWebhook {

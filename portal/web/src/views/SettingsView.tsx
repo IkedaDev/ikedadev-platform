@@ -2,6 +2,7 @@ import {
   Check,
   CheckCircle2,
   Globe,
+  Image as ImageIcon,
   Info,
   Layers,
   Link2,
@@ -20,6 +21,7 @@ import type {
   ThemeMode,
 } from '../types/api';
 import { BrandLogo, Button, Input, Select, StatusBadge, formatMoney, useToast } from '../ui';
+import { useMediaPicker } from '../components/shared/MediaPickerModal';
 import { sanitizeLogoUrl } from '../utils/url';
 
 interface SettingsViewProps {
@@ -110,6 +112,7 @@ export function SettingsView({ onDirtyChange }: SettingsViewProps) {
     resetToKropy,
   } = useTheme();
   const { toast } = useToast();
+  const { openMediaPicker } = useMediaPicker();
 
   const [branding, setBranding] = useState<TenantBranding>({ ...settings.branding });
   const [locale, setLocale] = useState<TenantLocale>({ ...settings.locale });
@@ -340,20 +343,39 @@ export function SettingsView({ onDirtyChange }: SettingsViewProps) {
                 </Select>
               </div>
 
-              <Input
-                label="URL del logotipo"
-                type="url"
-                value={branding.logoUrl}
-                onChange={(e) => updateBrandingField('logoUrl', e.target.value)}
-                placeholder="https://tunegocio.com/logo.png"
-                hint="Si lo dejas vacío o la imagen no carga, mostraremos tus iniciales."
-                error={
-                  branding.logoUrl.trim() && !sanitizeLogoUrl(branding.logoUrl)
-                    ? 'Usa una URL https:// o una ruta relativa válida (/logo.png)'
-                    : undefined
-                }
-                disabled={!canEditSettings}
-              />
+              <div className="row-sm">
+                <Input
+                  label="URL del logotipo"
+                  type="url"
+                  value={branding.logoUrl}
+                  onChange={(e) => updateBrandingField('logoUrl', e.target.value)}
+                  placeholder="https://tunegocio.com/logo.png"
+                  hint="Si lo dejas vacío o la imagen no carga, mostraremos tus iniciales."
+                  error={
+                    branding.logoUrl.trim() && !sanitizeLogoUrl(branding.logoUrl)
+                      ? 'Usa una URL https:// o una ruta relativa válida (/logo.png)'
+                      : undefined
+                  }
+                  disabled={!canEditSettings}
+                />
+                {canEditSettings && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    icon={<ImageIcon size={14} />}
+                    onClick={() =>
+                      openMediaPicker({
+                        context: 'branding',
+                        title: 'Seleccionar logotipo del negocio',
+                        onSelect: (url) => updateBrandingField('logoUrl', url),
+                      })
+                    }
+                  >
+                    Galería
+                  </Button>
+                )}
+              </div>
 
               <div className="field">
                 <span className="field-label">Paletas sugeridas</span>

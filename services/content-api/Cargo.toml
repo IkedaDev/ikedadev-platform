@@ -36,5 +36,4 @@ tracing-subscriber = { workspace = true }
 # Content CMS specific dependencies
 ammonia = "4"
 base64 = "0.22"
-hmac = "0.12"
 url = "2"

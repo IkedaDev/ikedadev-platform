@@ -38,7 +38,10 @@
       { "name": "telemetry:write", "description": "Write access to telemetry-api" },
       { "name": "content:read", "description": "Read access to content-api (articles, taxonomies, media, previews)" },
       { "name": "content:write", "description": "Write access to content-api (draft articles, taxonomies, media)" },
-      { "name": "content:publish", "description": "Publish, schedule, archive, delete articles and manage SSG Deploy Hooks" }
+      { "name": "content:publish", "description": "Publish, schedule, archive, delete articles and manage SSG Deploy Hooks" },
+      { "name": "media:read", "description": "Read media assets and tenant storage quota" },
+      { "name": "media:write", "description": "Upload and edit media metadata (excluding branding context for staff)" },
+      { "name": "media:delete", "description": "Soft-delete, restore, and permanently purge media assets" }
     ]
   },
   "clients": [
@@ -149,7 +152,10 @@
         "telemetry:write",
         "content:read",
         "content:write",
-        "content:publish"
+        "content:publish",
+        "media:read",
+        "media:write",
+        "media:delete"
       ]
     },
     {
@@ -178,7 +184,9 @@
         "telemetry:read",
         "telemetry:write",
         "content:read",
-        "content:write"
+        "content:write",
+        "media:read",
+        "media:write"
       ]
     }
   ]

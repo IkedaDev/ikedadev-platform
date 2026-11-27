@@ -1,5 +1,5 @@
 use crate::domain::models::{
-    Article, ArticleRevision, ArticleSeo, ArticleStatus, ContentCategory, ContentTag, MediaAsset,
+    Article, ArticleRevision, ArticleSeo, ArticleStatus, ContentCategory, ContentTag,
     PublishWebhook,
 };
 use async_trait::async_trait;
@@ -75,20 +75,6 @@ pub struct CreateTagData {
     pub tenant_id: Uuid,
     pub name: String,
     pub slug: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct CreateMediaData {
-    pub id: Uuid,
-    pub tenant_id: Uuid,
-    pub storage_provider: String,
-    pub file_name: String,
-    pub storage_key: String,
-    pub public_url: String,
-    pub mime_type: String,
-    pub size_bytes: i64,
-    pub alt_text: Option<String>,
-    pub uploaded_by: Option<Uuid>,
 }
 
 #[derive(Debug, Clone)]
@@ -168,24 +154,6 @@ pub trait TaxonomyRepository: Send + Sync {
     async fn create_tag(&self, data: CreateTagData) -> Result<ContentTag, AppError>;
     async fn list_tags(&self, tenant_id: Uuid) -> Result<Vec<ContentTag>, AppError>;
     async fn soft_delete_tag(&self, tenant_id: Uuid, id: Uuid) -> Result<(), AppError>;
-}
-
-#[async_trait]
-pub trait MediaRepository: Send + Sync {
-    async fn create(&self, data: CreateMediaData) -> Result<MediaAsset, AppError>;
-    async fn list(
-        &self,
-        tenant_id: Uuid,
-        page: u64,
-        page_size: u64,
-    ) -> Result<(Vec<MediaAsset>, u64), AppError>;
-    async fn update_alt_text(
-        &self,
-        tenant_id: Uuid,
-        id: Uuid,
-        alt_text: Option<String>,
-    ) -> Result<MediaAsset, AppError>;
-    async fn soft_delete(&self, tenant_id: Uuid, id: Uuid) -> Result<(), AppError>;
 }
 
 #[async_trait]

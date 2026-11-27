@@ -7,13 +7,13 @@ use base64::Engine;
 use chrono::{Duration, Utc};
 use content_api::application::preview_token::PreviewTokenService;
 use content_api::application::use_cases::{
-    ConfirmMediaCommand, CreateArticleCommand, CreateCategoryCommand, CreateTagCommand,
-    CreateWebhookCommand, PresignMediaCommand, UpdateArticleCommand, UpdateArticleStatusCommand,
+    CreateArticleCommand, CreateCategoryCommand, CreateTagCommand, CreateWebhookCommand,
+    UpdateArticleCommand, UpdateArticleStatusCommand,
 };
 use content_api::domain::models::ArticleStatus;
 use content_api::infrastructure::{
-    NoopObjectStorage, NoopScheduler, SqlxApiKeyValidator, SqlxArticleRepository,
-    SqlxMediaRepository, SqlxTaxonomyRepository, SqlxWebhookRepository,
+    NoopScheduler, SqlxApiKeyValidator, SqlxArticleRepository, SqlxTaxonomyRepository,
+    SqlxWebhookRepository,
 };
 use content_api::presentation::{create_router, ApiDoc, AppState};
 use ikeda_core::criteria::{
@@ -47,10 +47,6 @@ fn test_content_openapi_spec_generation() {
         "/v1/categories/{id}",
         "/v1/tags",
         "/v1/tags/{id}",
-        "/v1/media/presign",
-        "/v1/media/confirm",
-        "/v1/media",
-        "/v1/media/{id}",
         "/v1/webhooks",
         "/v1/webhooks/{id}",
         "/v1/webhooks/{id}/test",
@@ -60,6 +56,10 @@ fn test_content_openapi_spec_generation() {
             "Missing OpenAPI path: {path}"
         );
     }
+
+    // Regression: media endpoints have been extracted to services/media-api
+    assert!(!openapi.paths.paths.contains_key("/v1/media"));
+    assert!(!openapi.paths.paths.contains_key("/v1/media/presign"));
 }
 
 #[tokio::test]
@@ -111,16 +111,29 @@ async fn test_content_rls_isolation_lifecycle_criteria_and_signed_endpoints() {
     let state = AppState::new(
         Arc::new(SqlxArticleRepository::new(pool.clone())),
         Arc::new(SqlxTaxonomyRepository::new(pool.clone())),
-        Arc::new(SqlxMediaRepository::new(pool.clone())),
         Arc::new(SqlxWebhookRepository::new(pool.clone())),
-        Arc::new(NoopObjectStorage::default()),
         Arc::new(NoopScheduler::new(qstash_key)),
         PreviewTokenService::new("test-integration-preview-secret"),
         Arc::new(CachedApiKeyValidator::new(SqlxApiKeyValidator::new(pool))),
     );
     let app = create_router(state);
 
-    // 1. Tenant A creates Category, Tag, Media, and Webhook
+    // Regression: /v1/media is no longer served by content-api (extracted to media-api)
+    let res_removed_media = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/media")
+                .header(HEADER_API_KEY, &key_a)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res_removed_media.status(), StatusCode::NOT_FOUND);
+
+    // 1. Tenant A creates Category, Tag, and Webhook
     let res_cat = app
         .clone()
         .oneshot(
@@ -178,65 +191,6 @@ async fn test_content_rls_isolation_lifecycle_criteria_and_signed_endpoints() {
     )
     .unwrap();
     let tag_id = Uuid::parse_str(tag_json["data"]["id"].as_str().unwrap()).unwrap();
-
-    let res_presign = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/media/presign")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(HEADER_API_KEY, &key_a)
-                .body(Body::from(
-                    serde_json::to_string(&PresignMediaCommand {
-                        file_name: "cover.webp".to_string(),
-                        mime_type: "image/webp".to_string(),
-                        size_bytes: 120_000,
-                    })
-                    .unwrap(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res_presign.status(), StatusCode::OK);
-    let presign_json: serde_json::Value = serde_json::from_slice(
-        &axum::body::to_bytes(res_presign.into_body(), usize::MAX)
-            .await
-            .unwrap(),
-    )
-    .unwrap();
-    let asset_id = Uuid::parse_str(presign_json["data"]["asset_id"].as_str().unwrap()).unwrap();
-    let storage_key = presign_json["data"]["storage_key"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
-    let res_confirm = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/media/confirm")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(HEADER_API_KEY, &key_a)
-                .body(Body::from(
-                    serde_json::to_string(&ConfirmMediaCommand {
-                        asset_id,
-                        file_name: "cover.webp".to_string(),
-                        storage_key,
-                        public_url: None,
-                        mime_type: "image/webp".to_string(),
-                        size_bytes: 120_000,
-                        alt_text: Some("Portada".to_string()),
-                    })
-                    .unwrap(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res_confirm.status(), StatusCode::CREATED);
 
     let res_wh = app
         .clone()
@@ -314,13 +268,12 @@ async fn test_content_rls_isolation_lifecycle_criteria_and_signed_endpoints() {
         .unwrap()
         .contains("<script"));
 
-    // 3. STRICT RLS ISOLATION: Tenant B cannot access Tenant A's article, category, media, or webhook
+    // 3. STRICT RLS ISOLATION: Tenant B cannot access Tenant A's article, category, tag, or webhook
     for (method, uri) in [
         ("GET", format!("/v1/articles/{article_id}")),
         ("DELETE", format!("/v1/articles/{article_id}")),
         ("DELETE", format!("/v1/categories/{cat_id}")),
         ("DELETE", format!("/v1/tags/{tag_id}")),
-        ("DELETE", format!("/v1/media/{asset_id}")),
         ("DELETE", format!("/v1/webhooks/{wh_id}")),
     ] {
         let res = app

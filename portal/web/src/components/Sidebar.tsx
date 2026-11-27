@@ -2,6 +2,7 @@ import {
   Activity,
   CalendarClock,
   FileText,
+  Image as ImageIcon,
   LayoutDashboard,
   Package,
   RefreshCw,
@@ -21,6 +22,7 @@ export type NavSection =
   | 'catalog'
   | 'bookings'
   | 'content'
+  | 'media'
   | 'telemetry'
   | 'identity'
   | 'settings';
@@ -49,6 +51,12 @@ export const NAV_ITEMS: NavItemConfig[] = [
     label: 'Contenido / Blog',
     icon: FileText,
     featureKey: 'content',
+    section: 'main',
+  },
+  {
+    id: 'media',
+    label: 'Biblioteca de Medios',
+    icon: ImageIcon,
     section: 'main',
   },
   {

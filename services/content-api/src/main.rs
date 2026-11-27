@@ -1,5 +1,5 @@
 use content_api::application::preview_token::PreviewTokenService;
-use content_api::domain::ports::{ObjectStoragePort, SchedulerPort};
+use content_api::domain::ports::SchedulerPort;
 use content_api::{infrastructure, presentation};
 use ikeda_core::observability::{http_trace_layer, init_tracing, request_id_layer};
 use std::net::SocketAddr;
@@ -46,10 +46,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let article_repo = Arc::new(infrastructure::SqlxArticleRepository::new(pool.clone()));
     let taxonomy_repo = Arc::new(infrastructure::SqlxTaxonomyRepository::new(pool.clone()));
-    let media_repo = Arc::new(infrastructure::SqlxMediaRepository::new(pool.clone()));
     let webhook_repo = Arc::new(infrastructure::SqlxWebhookRepository::new(pool.clone()));
 
-    // Dedicated lightweight pool for centralized API key validation against identity_db
     let identity_pool = match std::env::var("IDENTITY_DATABASE_URL") {
         Ok(url) if !url.trim().is_empty() => {
             let identity_db_config = infrastructure::DatabaseConfig {
@@ -76,73 +74,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         infrastructure::SqlxApiKeyValidator::new(identity_pool),
     ));
 
-    // Object Storage adapter (Cloudflare R2 S3-compatible or local localhost dev fallback)
-    let (object_storage, local_media_dir): (
-        Arc<dyn ObjectStoragePort>,
-        Option<std::path::PathBuf>,
-    ) = match (
-        std::env::var("R2_ACCOUNT_ID")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
-        std::env::var("R2_BUCKET_NAME")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
-        std::env::var("R2_ACCESS_KEY_ID")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
-        std::env::var("R2_SECRET_ACCESS_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
-        std::env::var("R2_PUBLIC_BASE_URL")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
-    ) {
-        (
-            Some(account_id),
-            Some(bucket_name),
-            Some(access_key_id),
-            Some(secret_access_key),
-            Some(public_base_url),
-        ) => {
-            tracing::info!(bucket = %bucket_name, "Cloudflare R2 ObjectStoragePort enabled (R2_PLATFORM).");
-            (
-                Arc::new(infrastructure::R2S3ObjectStorage::new(
-                    infrastructure::R2Config {
-                        account_id,
-                        bucket_name,
-                        access_key_id,
-                        secret_access_key,
-                        public_base_url,
-                        endpoint_url: std::env::var("R2_ENDPOINT_URL").ok(),
-                    },
-                )),
-                None,
-            )
-        }
-        _ => {
-            let local_base = std::env::var("LOCAL_MEDIA_BASE_URL")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| format!("http://localhost:{port}/v1/media/local"));
-            let dir = std::path::PathBuf::from(
-                std::env::var("LOCAL_MEDIA_DIR")
-                    .ok()
-                    .filter(|s| !s.trim().is_empty())
-                    .unwrap_or_else(|| "/tmp/ikeda-content-media".to_string()),
-            );
-            tracing::warn!(
-                %local_base,
-                local_dir = %dir.display(),
-                "R2 credentials not configured; using local dev media storage on localhost."
-            );
-            (
-                Arc::new(infrastructure::NoopObjectStorage::new(local_base)),
-                Some(dir),
-            )
-        }
-    };
-
-    // Scheduler adapter (Upstash QStash or No-op local dev fallback)
     let scheduler: Arc<dyn SchedulerPort> = match (
         std::env::var("QSTASH_TOKEN")
             .ok()
@@ -191,20 +122,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut state = presentation::AppState::new(
         article_repo,
         taxonomy_repo,
-        media_repo,
         webhook_repo,
-        object_storage,
         scheduler,
         PreviewTokenService::new(preview_secret),
         api_key_validator,
     )
     .with_allow_http_urls(allow_http_urls);
 
-    if let Some(dir) = local_media_dir {
-        state = state.with_local_media_dir(dir);
-    }
-
-    // Optional Keycloak / OIDC JWKS JWT validation (accepts JWKS_URI or JWKS_URL)
     let jwks_url = std::env::var("JWKS_URI").or_else(|_| std::env::var("JWKS_URL"));
     if let (Ok(jwks_uri), Ok(jwt_issuer)) = (jwks_url, std::env::var("JWT_ISSUER")) {
         if !jwks_uri.trim().is_empty() && !jwt_issuer.trim().is_empty() {

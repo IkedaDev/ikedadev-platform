@@ -24,7 +24,8 @@ ikedadev-platform/
 │   ├── catalog-api/                     # Categorías, servicios, productos, bundles, variantes y batch lookup
 │   ├── bookings-api/                    # Reservas multi-servicio con snapshots congelados, estados e idempotencia
 │   ├── telemetry-api/                   # Eventos append-only (TRACKING/AUDIT), timeline de cliente y métricas
-│   └── content-api/                     # Headless CMS multi-tenant (TipTap JSON/HTML, Media Library R2/BYOS, SSR+SSG)
+│   ├── content-api/                     # Headless CMS multi-tenant (TipTap JSON/HTML, SSR+SSG, Deploy Hooks)
+│   └── media-api/                       # Servicio transversal de medios multi-tenant (Cloudflare R2/BYOS, cuotas, RLS)
 ├── deploy/
 │   ├── keycloak/ikeda-realm.json        # Realm `ikeda` auto-importado (roles, clientes OIDC y usuarios demo)
 │   ├── observability/                   # Stack opcional local/K3s: Grafana Loki, Promtail y Grafana pre-aprovisionado
@@ -48,6 +49,7 @@ ikedadev-platform/
     ├── bookings-api.yml                 # Build OCI multi-stage (cargo-chef) y push a ghcr.io / Artifact Registry
     ├── telemetry-api.yml                # Build OCI multi-stage (cargo-chef) y push a ghcr.io / Artifact Registry
     ├── content-api.yml                  # Build OCI multi-stage (cargo-chef) y deploy a Cloud Run (content-api-*)
+    ├── media-api.yml                    # Build OCI multi-stage (cargo-chef) y deploy a Cloud Run (media-api-*)
     └── portal-bff.yml                   # Build Node 22 Alpine desde portal/bff y deploy a Cloud Run (tenant-portal-bff-*)
 ```
 
@@ -64,8 +66,9 @@ ikedadev-platform/
 | **`bookings-api`** | `8084` | `bookings_db` | `http://localhost:8084/swagger-ui` | `http://localhost:8084/openapi.json` | `http://localhost:8084/health` |
 | **`telemetry-api`** | `8085` | `telemetry_db` | `http://localhost:8085/swagger-ui` | `http://localhost:8085/openapi.json` | `http://localhost:8085/health` |
 | **`content-api`** | `8086` | `content_db` | `http://localhost:8086/swagger-ui` | `http://localhost:8086/openapi.json` | `http://localhost:8086/health` |
+| **`media-api`** | `8087` | `media_db` | `http://localhost:8087/swagger-ui` | `http://localhost:8087/openapi.json` | `http://localhost:8087/health` |
 | **Keycloak (`ikeda`)** | `8180` | In-memory (dev) | — | `http://localhost:8180/realms/ikeda/.well-known/openid-configuration` | `http://localhost:8180` |
-| **PostgreSQL 17** | `5432` | Multi-DB (`events_db`, `crm_db`, `identity_db`, `catalog_db`, `bookings_db`, `telemetry_db`, `content_db`) | — | — | `pg_isready` |
+| **PostgreSQL 17** | `5432` | Multi-DB (`events_db`, `crm_db`, `identity_db`, `catalog_db`, `bookings_db`, `telemetry_db`, `content_db`, `media_db`) | — | — | `pg_isready` |
 | **Grafana / Loki** *(opcional)* | `3000` / `3100` | Volumen `loki_data` | — | — | `http://localhost:3100/ready` |
 | **Portal SaaS BFF (`portal/bff`)** | `4000` | — (stateless + Keycloak) | — | — | `http://localhost:4000/health` |
 | **Portal SaaS Web (`portal/web`)** | `5173` | — | — | — | `http://localhost:5173` |
