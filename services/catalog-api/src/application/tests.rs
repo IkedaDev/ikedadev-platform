@@ -282,6 +282,8 @@ async fn test_create_service_product_and_bundle_with_validations() {
                 sku: Some("SVC-MASAJE-60".to_string()),
                 name: "Masaje Descontracturante".to_string(),
                 description: Some("Sesión de 60 minutos".to_string()),
+                image_url: Some("https://cdn.example.com/catalog/masaje.webp".to_string()),
+                gallery_urls: vec!["https://cdn.example.com/catalog/masaje-2.webp".to_string()],
                 base_price: 35_000,
                 currency: Some("CLP".to_string()),
                 tax_rate_bps: Some(1900),
@@ -297,6 +299,11 @@ async fn test_create_service_product_and_bundle_with_validations() {
         .await
         .unwrap();
     assert_eq!(svc.details.item_type_str(), "SERVICE");
+    assert_eq!(
+        svc.image_url.as_deref(),
+        Some("https://cdn.example.com/catalog/masaje.webp")
+    );
+    assert_eq!(svc.gallery_urls.len(), 1);
 
     // 2. Create PRODUCT
     let prod = create_item
@@ -307,6 +314,8 @@ async fn test_create_service_product_and_bundle_with_validations() {
                 sku: Some("PRD-ACEITE-250".to_string()),
                 name: "Aceite Esencial Lavanda".to_string(),
                 description: None,
+                image_url: None,
+                gallery_urls: vec![],
                 base_price: 12_990,
                 currency: Some("CLP".to_string()),
                 tax_rate_bps: Some(1900),
@@ -332,6 +341,8 @@ async fn test_create_service_product_and_bundle_with_validations() {
                 sku: Some("BND-RELAX-01".to_string()),
                 name: "Pack Relax Completo".to_string(),
                 description: None,
+                image_url: None,
+                gallery_urls: vec![],
                 base_price: 42_000,
                 currency: Some("CLP".to_string()),
                 tax_rate_bps: Some(1900),
@@ -365,6 +376,8 @@ async fn test_create_service_product_and_bundle_with_validations() {
                 sku: Some("SVC-MASAJE-60".to_string()),
                 name: "Otro Servicio".to_string(),
                 description: None,
+                image_url: None,
+                gallery_urls: vec![],
                 base_price: 20_000,
                 currency: None,
                 tax_rate_bps: None,
@@ -390,6 +403,8 @@ async fn test_create_service_product_and_bundle_with_validations() {
                 sku: None,
                 name: "Bad Service".to_string(),
                 description: None,
+                image_url: None,
+                gallery_urls: vec![],
                 base_price: 10_000,
                 currency: None,
                 tax_rate_bps: None,
@@ -415,6 +430,8 @@ async fn test_create_service_product_and_bundle_with_validations() {
                 sku: None,
                 name: "Negative Price".to_string(),
                 description: None,
+                image_url: None,
+                gallery_urls: vec![],
                 base_price: -100,
                 currency: None,
                 tax_rate_bps: None,
@@ -442,4 +459,129 @@ async fn test_create_service_product_and_bundle_with_validations() {
     let too_many: Vec<Uuid> = (0..=MAX_BATCH_IDS).map(|_| Uuid::new_v4()).collect();
     let batch_err = batch_uc.execute(tenant_id, too_many).await.unwrap_err();
     assert!(matches!(batch_err, AppError::BadRequest(_)));
+}
+
+#[tokio::test]
+async fn test_image_url_validation_gallery_limits_and_patch_clear() {
+    use crate::domain::models::{validate_gallery_urls, validate_image_url, MAX_IMAGE_URL_LEN};
+
+    // Valid HTTPS URL
+    assert!(validate_image_url("https://cdn.kropy.cl/img.webp", "image_url", false).is_ok());
+
+    // HTTP rejected when allow_http=false, allowed when allow_http=true
+    assert!(matches!(
+        validate_image_url(
+            "http://localhost:8087/v1/media/local/asset.webp",
+            "image_url",
+            false
+        ),
+        Err(AppError::BadRequest(_))
+    ));
+    assert!(validate_image_url(
+        "http://localhost:8087/v1/media/local/asset.webp",
+        "image_url",
+        true
+    )
+    .is_ok());
+
+    // Unsafe schemes and protocol-relative URLs rejected even when allow_http=true
+    for bad in [
+        "javascript:alert(1)",
+        "data:image/svg+xml,<svg onload=alert(1)>",
+        "//evil.example/img.png",
+        "ftp://files.example/img.png",
+        "not-a-url",
+    ] {
+        assert!(
+            matches!(
+                validate_image_url(bad, "image_url", true),
+                Err(AppError::BadRequest(_))
+            ),
+            "Expected BadRequest for '{bad}'"
+        );
+    }
+
+    // Overlong URL (> 2048 chars) rejected
+    let overlong = format!("https://cdn.kropy.cl/{}", "a".repeat(MAX_IMAGE_URL_LEN));
+    assert!(matches!(
+        validate_image_url(&overlong, "image_url", true),
+        Err(AppError::BadRequest(_))
+    ));
+
+    // Gallery: max 8 allowed, 9 rejected, duplicates rejected
+    let eight: Vec<String> = (1..=8)
+        .map(|i| format!("https://cdn.kropy.cl/item-{i}.webp"))
+        .collect();
+    assert_eq!(validate_gallery_urls(&eight, false).unwrap().len(), 8);
+
+    let mut nine = eight.clone();
+    nine.push("https://cdn.kropy.cl/item-9.webp".to_string());
+    assert!(matches!(
+        validate_gallery_urls(&nine, false),
+        Err(AppError::BadRequest(_))
+    ));
+
+    let dup_gallery = vec![
+        "https://cdn.kropy.cl/item-1.webp".to_string(),
+        "https://cdn.kropy.cl/item-1.webp".to_string(),
+    ];
+    assert!(matches!(
+        validate_gallery_urls(&dup_gallery, false),
+        Err(AppError::BadRequest(_))
+    ));
+
+    // UpdateCatalogItemUseCase: omitting image_url preserves it, explicit null clears it
+    let cat_repo = Arc::new(MockCategoryRepo::default());
+    let item_repo = Arc::new(MockItemRepo::default());
+    let create_uc = CreateCatalogItemUseCase::new(cat_repo.clone(), item_repo.clone());
+    let update_uc = UpdateCatalogItemUseCase::new(cat_repo, item_repo);
+    let tenant_id = Uuid::new_v4();
+
+    let created = create_uc
+        .execute(
+            tenant_id,
+            CreateCatalogItemCommand {
+                category_id: None,
+                sku: None,
+                name: "Shampoo Orgánico".to_string(),
+                description: None,
+                image_url: Some("https://cdn.kropy.cl/shampoo.webp".to_string()),
+                gallery_urls: vec!["https://cdn.kropy.cl/shampoo-2.webp".to_string()],
+                base_price: 9_990,
+                currency: Some("CLP".to_string()),
+                tax_rate_bps: None,
+                tax_included: None,
+                details: ItemDetails::Product {
+                    unit_of_measure: Some("ML".to_string()),
+                    track_inventory: true,
+                },
+                is_active: Some(true),
+                metadata: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    // Omitting image_url in PATCH JSON leaves it untouched
+    let cmd_keep: UpdateCatalogItemCommand =
+        serde_json::from_str(r#"{"name": "Shampoo Orgánico 500ml"}"#).unwrap();
+    let kept = update_uc
+        .execute(tenant_id, created.id, cmd_keep)
+        .await
+        .unwrap();
+    assert_eq!(
+        kept.image_url.as_deref(),
+        Some("https://cdn.kropy.cl/shampoo.webp")
+    );
+    assert_eq!(kept.gallery_urls.len(), 1);
+
+    // Passing image_url: null clears image_url and gallery_urls: [] clears gallery
+    let cmd_clear: UpdateCatalogItemCommand =
+        serde_json::from_str(r#"{"image_url": null, "gallery_urls": []}"#).unwrap();
+    let cleared = update_uc
+        .execute(tenant_id, created.id, cmd_clear)
+        .await
+        .unwrap();
+    assert_eq!(cleared.image_url, None);
+    assert!(cleared.gallery_urls.is_empty());
 }

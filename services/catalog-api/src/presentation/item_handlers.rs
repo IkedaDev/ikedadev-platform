@@ -50,7 +50,8 @@ pub async fn create_item(
     Json(cmd): Json<CreateCatalogItemCommand>,
 ) -> Result<impl IntoResponse, AppError> {
     require_catalog_write(&tenant)?;
-    let uc = CreateCatalogItemUseCase::new(state.category_repo.clone(), state.item_repo.clone());
+    let uc = CreateCatalogItemUseCase::new(state.category_repo.clone(), state.item_repo.clone())
+        .with_allow_http_urls(state.allow_http_urls);
     let item = uc.execute(tenant.tenant_id, cmd).await?;
     Ok((
         StatusCode::CREATED,
@@ -109,7 +110,8 @@ pub async fn patch_item(
     Json(cmd): Json<UpdateCatalogItemCommand>,
 ) -> Result<impl IntoResponse, AppError> {
     require_catalog_write(&tenant)?;
-    let uc = UpdateCatalogItemUseCase::new(state.category_repo.clone(), state.item_repo.clone());
+    let uc = UpdateCatalogItemUseCase::new(state.category_repo.clone(), state.item_repo.clone())
+        .with_allow_http_urls(state.allow_http_urls);
     let updated = uc.execute(tenant.tenant_id, id, cmd).await?;
     Ok(Json(ApiResponse::ok(updated)))
 }

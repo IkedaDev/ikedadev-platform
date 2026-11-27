@@ -9,6 +9,7 @@ import type {
   BookingStatus,
   Calendar,
   CatalogItem,
+  CatalogItemMutationPayload,
   Category,
   Client,
   ContentCategory,
@@ -343,14 +344,14 @@ export const bffClient = {
   searchItems: (criteria: Criteria) =>
     request<PaginatedResponse<CatalogItem>>('POST', '/api/items/search', { body: criteria }),
 
-  createItem: async (payload: Record<string, unknown>) => {
+  createItem: async (payload: CatalogItemMutationPayload) => {
     const res = await request<{ success: boolean; data: CatalogItem }>('POST', '/api/items', {
       body: payload,
     });
     return res.data;
   },
 
-  updateItem: async (id: string, payload: Record<string, unknown>) => {
+  updateItem: async (id: string, payload: CatalogItemMutationPayload) => {
     const res = await request<{ success: boolean; data: CatalogItem }>(
       'PATCH',
       `/api/items/${id}`,

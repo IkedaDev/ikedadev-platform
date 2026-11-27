@@ -190,6 +190,8 @@ export interface CatalogItemBase {
   sku: string | null;
   name: string;
   description: string | null;
+  image_url: string | null;
+  gallery_urls: string[];
   base_price: number;
   currency: string;
   tax_rate_bps: number;
@@ -209,6 +211,8 @@ export type CreateCatalogItemCommand = {
   sku?: string | null;
   name: string;
   description?: string | null;
+  image_url?: string | null;
+  gallery_urls?: string[];
   base_price: number;
   currency?: string;
   tax_rate_bps?: number;
@@ -222,6 +226,8 @@ export interface UpdateCatalogItemCommand {
   sku?: string | null;
   name?: string;
   description?: string | null;
+  image_url?: string | null;
+  gallery_urls?: string[];
   base_price?: number;
   currency?: string;
   tax_rate_bps?: number;

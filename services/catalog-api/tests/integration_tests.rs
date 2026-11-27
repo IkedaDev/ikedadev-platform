@@ -138,6 +138,13 @@ async fn test_catalog_rls_criteria_batch_and_soft_delete_on_postgres() {
                         sku: Some(svc_sku.clone()),
                         name: "Masaje Piedras Calientes".to_string(),
                         description: Some("Relajación profunda".to_string()),
+                        image_url: Some(
+                            "https://cdn.kropy.cl/catalog/masaje-piedras.webp".to_string(),
+                        ),
+                        gallery_urls: vec![
+                            "https://cdn.kropy.cl/catalog/masaje-1.webp".to_string(),
+                            "https://cdn.kropy.cl/catalog/masaje-2.webp".to_string(),
+                        ],
                         base_price: 35_000,
                         currency: Some("CLP".to_string()),
                         tax_rate_bps: Some(1900),
@@ -204,6 +211,8 @@ async fn test_catalog_rls_criteria_batch_and_soft_delete_on_postgres() {
                         sku: Some(format!("PRD-{}", Uuid::new_v4().simple())),
                         name: "Crema Hidratante".to_string(),
                         description: None,
+                        image_url: None,
+                        gallery_urls: vec![],
                         base_price: 15_000,
                         currency: Some("CLP".to_string()),
                         tax_rate_bps: Some(1900),
@@ -244,6 +253,8 @@ async fn test_catalog_rls_criteria_batch_and_soft_delete_on_postgres() {
                         sku: Some(format!("BND-{}", Uuid::new_v4().simple())),
                         name: "Pack Spa Premium".to_string(),
                         description: None,
+                        image_url: None,
+                        gallery_urls: vec![],
                         base_price: 45_000,
                         currency: Some("CLP".to_string()),
                         tax_rate_bps: Some(1900),
@@ -365,9 +376,14 @@ async fn test_catalog_rls_criteria_batch_and_soft_delete_on_postgres() {
     let found_items = search_json["data"].as_array().unwrap();
     assert_eq!(found_items.len(), 1);
     assert_eq!(found_items[0]["id"], svc_id.to_string());
+    assert_eq!(
+        found_items[0]["image_url"],
+        "https://cdn.kropy.cl/catalog/masaje-piedras.webp"
+    );
+    assert_eq!(found_items[0]["gallery_urls"].as_array().unwrap().len(), 2);
     assert_eq!(found_items[0]["variants"].as_array().unwrap().len(), 1);
 
-    // 6. Batch lookup by Tenant A returns svc + bundle hydrated
+    // 6. Batch lookup by Tenant A returns svc + bundle hydrated (including image fields)
     let res_batch = app
         .clone()
         .oneshot(
@@ -393,7 +409,50 @@ async fn test_catalog_rls_criteria_batch_and_soft_delete_on_postgres() {
             .unwrap(),
     )
     .unwrap();
-    assert_eq!(batch_json["data"].as_array().unwrap().len(), 2);
+    let batch_items = batch_json["data"].as_array().unwrap();
+    assert_eq!(batch_items.len(), 2);
+    let batch_svc = batch_items
+        .iter()
+        .find(|it| it["id"] == svc_id.to_string())
+        .unwrap();
+    assert_eq!(
+        batch_svc["image_url"],
+        "https://cdn.kropy.cl/catalog/masaje-piedras.webp"
+    );
+    assert_eq!(batch_svc["gallery_urls"].as_array().unwrap().len(), 2);
+
+    // 6b. PATCH clears image_url to null and updates gallery_urls
+    let res_patch = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/v1/items/{svc_id}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(HEADER_API_KEY, &key_a)
+                .body(Body::from(
+                    serde_json::json!({
+                        "image_url": null,
+                        "gallery_urls": ["https://cdn.kropy.cl/catalog/masaje-3.webp"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res_patch.status(), StatusCode::OK);
+    let patch_json: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(res_patch.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(patch_json["data"]["image_url"].is_null());
+    assert_eq!(
+        patch_json["data"]["gallery_urls"],
+        serde_json::json!(["https://cdn.kropy.cl/catalog/masaje-3.webp"])
+    );
 
     // 7. Soft Delete: delete svc_id -> disappears from GET and search
     let res_del = app

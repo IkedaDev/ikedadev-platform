@@ -19,6 +19,8 @@ struct CatalogItemRow {
     sku: Option<String>,
     name: String,
     description: Option<String>,
+    image_url: Option<String>,
+    gallery_urls: Vec<String>,
     base_price: i64,
     currency: String,
     tax_rate_bps: i32,
@@ -105,6 +107,8 @@ fn row_to_item(
         sku: row.sku,
         name: row.name,
         description: row.description,
+        image_url: row.image_url,
+        gallery_urls: row.gallery_urls,
         base_price: row.base_price,
         currency: row.currency,
         tax_rate_bps: row.tax_rate_bps,
@@ -256,17 +260,20 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
             r#"
             INSERT INTO catalog_items (
                 id, tenant_id, category_id, item_type, sku, name, description,
+                image_url, gallery_urls,
                 base_price, currency, tax_rate_bps, tax_included,
                 duration_minutes, buffer_minutes, unit_of_measure, track_inventory,
                 is_active, metadata, created_at, updated_at, deleted_at
             )
             VALUES (
                 $1, $2, $3, $4, $5, $6, $7,
-                $8, $9, $10, $11,
-                $12, $13, $14, $15,
-                $16, $17, $18, $19, $20
+                $8, $9,
+                $10, $11, $12, $13,
+                $14, $15, $16, $17,
+                $18, $19, $20, $21, $22
             )
             RETURNING id, tenant_id, category_id, item_type, sku, name, description,
+                      image_url, gallery_urls,
                       base_price, currency, tax_rate_bps, tax_included,
                       duration_minutes, buffer_minutes, unit_of_measure, track_inventory,
                       is_active, metadata, created_at, updated_at, deleted_at
@@ -279,6 +286,8 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
         .bind(&item.sku)
         .bind(&item.name)
         .bind(&item.description)
+        .bind(&item.image_url)
+        .bind(&item.gallery_urls)
         .bind(item.base_price)
         .bind(&item.currency)
         .bind(item.tax_rate_bps)
@@ -329,6 +338,7 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
         let row = sqlx::query_as::<_, CatalogItemRow>(
             r#"
             SELECT id, tenant_id, category_id, item_type, sku, name, description,
+                   image_url, gallery_urls,
                    base_price, currency, tax_rate_bps, tax_included,
                    duration_minutes, buffer_minutes, unit_of_measure, track_inventory,
                    is_active, metadata, created_at, updated_at, deleted_at
@@ -367,6 +377,7 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
         let row = sqlx::query_as::<_, CatalogItemRow>(
             r#"
             SELECT id, tenant_id, category_id, item_type, sku, name, description,
+                   image_url, gallery_urls,
                    base_price, currency, tax_rate_bps, tax_included,
                    duration_minutes, buffer_minutes, unit_of_measure, track_inventory,
                    is_active, metadata, created_at, updated_at, deleted_at
@@ -409,6 +420,7 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
         let rows = sqlx::query_as::<_, CatalogItemRow>(
             r#"
             SELECT id, tenant_id, category_id, item_type, sku, name, description,
+                   image_url, gallery_urls,
                    base_price, currency, tax_rate_bps, tax_included,
                    duration_minutes, buffer_minutes, unit_of_measure, track_inventory,
                    is_active, metadata, created_at, updated_at, deleted_at
@@ -455,6 +467,7 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
 
         let mut data_qb: QueryBuilder<'_, Postgres> = QueryBuilder::new(
             "SELECT id, tenant_id, category_id, item_type, sku, name, description, \
+             image_url, gallery_urls, \
              base_price, currency, tax_rate_bps, tax_included, \
              duration_minutes, buffer_minutes, unit_of_measure, track_inventory, \
              is_active, metadata, created_at, updated_at, deleted_at \
@@ -504,11 +517,13 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
             r#"
             UPDATE catalog_items
             SET category_id = $1, item_type = $2, sku = $3, name = $4, description = $5,
-                base_price = $6, currency = $7, tax_rate_bps = $8, tax_included = $9,
-                duration_minutes = $10, buffer_minutes = $11, unit_of_measure = $12,
-                track_inventory = $13, is_active = $14, metadata = $15, updated_at = NOW()
-            WHERE id = $16 AND tenant_id = $17 AND deleted_at IS NULL
+                image_url = $6, gallery_urls = $7,
+                base_price = $8, currency = $9, tax_rate_bps = $10, tax_included = $11,
+                duration_minutes = $12, buffer_minutes = $13, unit_of_measure = $14,
+                track_inventory = $15, is_active = $16, metadata = $17, updated_at = NOW()
+            WHERE id = $18 AND tenant_id = $19 AND deleted_at IS NULL
             RETURNING id, tenant_id, category_id, item_type, sku, name, description,
+                      image_url, gallery_urls,
                       base_price, currency, tax_rate_bps, tax_included,
                       duration_minutes, buffer_minutes, unit_of_measure, track_inventory,
                       is_active, metadata, created_at, updated_at, deleted_at
@@ -519,6 +534,8 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
         .bind(&item.sku)
         .bind(&item.name)
         .bind(&item.description)
+        .bind(&item.image_url)
+        .bind(&item.gallery_urls)
         .bind(item.base_price)
         .bind(&item.currency)
         .bind(item.tax_rate_bps)

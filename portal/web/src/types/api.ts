@@ -136,6 +136,8 @@ export interface CatalogItem {
   sku: string | null;
   name: string;
   description: string | null;
+  image_url: string | null;
+  gallery_urls: string[];
   base_price: number;
   currency: string;
   tax_rate_bps: number;
@@ -149,6 +151,27 @@ export interface CatalogItem {
   is_active: boolean;
   metadata: Record<string, unknown>;
   created_at: string;
+}
+
+export interface CatalogItemMutationPayload {
+  category_id?: string | null;
+  sku?: string | null;
+  name?: string;
+  description?: string | null;
+  image_url?: string | null;
+  gallery_urls?: string[];
+  base_price?: number;
+  currency?: string;
+  tax_rate_bps?: number;
+  tax_included?: boolean;
+  item_type?: CatalogItemType;
+  duration_minutes?: number;
+  buffer_minutes?: number;
+  unit_of_measure?: string | null;
+  track_inventory?: boolean;
+  items?: Array<{ item_id: string; quantity: number }>;
+  is_active?: boolean;
+  metadata?: Record<string, unknown>;
 }
 
 export interface Calendar {

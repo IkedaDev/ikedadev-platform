@@ -62,7 +62,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         infrastructure::SqlxApiKeyValidator::new(identity_pool),
     ));
 
-    let mut state = presentation::AppState::new(category_repo, item_repo, api_key_validator);
+    let allow_http_urls = std::env::var("ALLOW_INSECURE_HTTP_URLS")
+        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+        .unwrap_or(false);
+
+    let mut state = presentation::AppState::new(category_repo, item_repo, api_key_validator)
+        .with_allow_http_urls(allow_http_urls);
 
     // Optional Keycloak / OIDC JWKS JWT validation (accepts JWKS_URI or JWKS_URL)
     let jwks_url = std::env::var("JWKS_URI").or_else(|_| std::env::var("JWKS_URL"));

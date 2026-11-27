@@ -1,9 +1,17 @@
-import { Folder, FolderPlus, Package, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Folder, FolderPlus, Image as ImageIcon, Package, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { BffApiError, bffClient } from '../api/bffClient';
 import { usePermissions } from '../auth/permissions';
+import { useMediaPicker } from '../components/shared/MediaPickerModal';
 import { useTheme } from '../context/ThemeProvider';
-import type { AuthUser, CatalogItem, CatalogItemType, Category, Criteria } from '../types/api';
+import type {
+  AuthUser,
+  CatalogItem,
+  CatalogItemMutationPayload,
+  CatalogItemType,
+  Category,
+  Criteria,
+} from '../types/api';
 import {
   Button,
   DataTable,
@@ -17,6 +25,7 @@ import {
   useToast,
   type DataTableColumn,
 } from '../ui';
+import { sanitizeImageUrl } from '../utils/url';
 
 type TypeFilter = 'ALL' | CatalogItemType;
 
@@ -34,12 +43,40 @@ const TYPE_FILTER_LABEL: Record<TypeFilter, string> = {
 };
 
 const CURRENCY_OPTIONS = ['CLP', 'USD', 'EUR', 'MXN', 'ARS', 'COP', 'PEN'];
+const MAX_GALLERY_IMAGES = 8;
+
+interface SafeCatalogImageProps {
+  src?: string | null;
+  alt: string;
+  fallbackSize?: number;
+}
+
+function SafeCatalogImage({ src, alt, fallbackSize = 18 }: SafeCatalogImageProps) {
+  const safeSrc = sanitizeImageUrl(src);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+
+  if (!safeSrc || failedSrc === safeSrc) {
+    return <ImageIcon size={fallbackSize} aria-hidden="true" />;
+  }
+
+  return (
+    <img
+      src={safeSrc}
+      alt={alt}
+      loading="lazy"
+      referrerPolicy="no-referrer"
+      onError={() => setFailedSrc(safeSrc)}
+    />
+  );
+}
 
 interface ItemFormState {
   name: string;
   sku: string;
   description: string;
   category_id: string;
+  image_url: string;
+  gallery_urls: string[];
   base_price: string;
   currency: string;
   item_type: CatalogItemType;
@@ -62,6 +99,7 @@ interface ItemDrawerFormProps {
   initialItem: CatalogItem | null;
   categories: Category[];
   defaultCurrency: string;
+  canUploadMedia: boolean;
   onDirtyChange: (dirty: boolean) => void;
   onSaved: () => void;
   onCancel: () => void;
@@ -71,11 +109,13 @@ function ItemDrawerForm({
   initialItem,
   categories,
   defaultCurrency,
+  canUploadMedia,
   onDirtyChange,
   onSaved,
   onCancel,
 }: ItemDrawerFormProps) {
   const { toast } = useToast();
+  const { openMediaPicker } = useMediaPicker();
   const [form, setForm] = useState<ItemFormState>(() =>
     initialItem
       ? {
@@ -83,6 +123,8 @@ function ItemDrawerForm({
           sku: initialItem.sku ?? '',
           description: initialItem.description ?? '',
           category_id: initialItem.category_id ?? '',
+          image_url: initialItem.image_url ?? '',
+          gallery_urls: initialItem.gallery_urls ?? [],
           base_price: String(initialItem.base_price),
           currency: initialItem.currency,
           item_type: initialItem.item_type,
@@ -96,6 +138,8 @@ function ItemDrawerForm({
           sku: '',
           description: '',
           category_id: categories[0]?.id ?? '',
+          image_url: '',
+          gallery_urls: [],
           base_price: '25000',
           currency: defaultCurrency || 'CLP',
           item_type: 'SERVICE',
@@ -130,11 +174,13 @@ function ItemDrawerForm({
       return;
     }
 
-    const payload: Record<string, unknown> = {
+    const payload: CatalogItemMutationPayload = {
       name: form.name.trim(),
       sku: form.sku.trim() || null,
       description: form.description.trim() || null,
       category_id: form.category_id || null,
+      image_url: form.image_url.trim() || null,
+      gallery_urls: form.gallery_urls,
       base_price: Number(form.base_price) || 0,
       currency: form.currency.trim().toUpperCase() || defaultCurrency || 'CLP',
       item_type: form.item_type,
@@ -288,6 +334,131 @@ function ItemDrawerForm({
         placeholder="Detalle comercial del servicio o producto..."
       />
 
+      {/* Imagen principal */}
+      <div className="catalog-media-section">
+        <span className="field-label">Imagen principal</span>
+        <div className="catalog-cover-row">
+          <div className="catalog-cover-preview">
+            <SafeCatalogImage
+              src={form.image_url}
+              alt={form.name.trim() || 'Imagen principal del ítem'}
+              fallbackSize={24}
+            />
+          </div>
+          <div className="stack-xs min-w-0">
+            <div className="row-xs row-wrap">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                icon={<ImageIcon size={14} />}
+                disabled={saving}
+                onClick={() =>
+                  openMediaPicker({
+                    context: 'catalog',
+                    title: 'Imagen principal del ítem',
+                    allowUpload: canUploadMedia,
+                    onSelect: (url) => {
+                      updateField('image_url', url);
+                    },
+                  })
+                }
+              >
+                {canUploadMedia ? 'Elegir / Subir imagen' : 'Elegir imagen'}
+              </Button>
+              {form.image_url && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  icon={<Trash2 size={14} />}
+                  disabled={saving}
+                  onClick={() => updateField('image_url', '')}
+                >
+                  Quitar
+                </Button>
+              )}
+            </div>
+            <span className="text-xs text-muted">
+              Se muestra como portada del ítem en el catálogo.
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Galería adicional */}
+      <div className="catalog-media-section">
+        <div className="row-between row-wrap gap-sm">
+          <span className="field-label">
+            Galería adicional ({form.gallery_urls.length} / {MAX_GALLERY_IMAGES})
+          </span>
+          {form.gallery_urls.length < MAX_GALLERY_IMAGES && (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              icon={<Plus size={14} />}
+              disabled={saving}
+              onClick={() =>
+                openMediaPicker({
+                  context: 'catalog',
+                  title: 'Añadir imagen a la galería',
+                  allowUpload: canUploadMedia,
+                  onSelect: (url) => {
+                    const trimmed = url.trim();
+                    if (!trimmed) return;
+                    if (form.gallery_urls.includes(trimmed)) {
+                      toast.info('Esta imagen ya está en la galería.');
+                      return;
+                    }
+                    if (form.gallery_urls.length >= MAX_GALLERY_IMAGES) {
+                      toast.error(`Máximo ${MAX_GALLERY_IMAGES} imágenes en la galería.`);
+                      return;
+                    }
+                    updateField('gallery_urls', [...form.gallery_urls, trimmed]);
+                  },
+                })
+              }
+            >
+              Añadir imagen
+            </Button>
+          )}
+        </div>
+
+        {form.gallery_urls.length > 0 ? (
+          <div className="catalog-gallery-grid">
+            {form.gallery_urls.map((url, idx) => (
+              <div key={url} className="catalog-gallery-item">
+                <SafeCatalogImage
+                  src={url}
+                  alt={`Imagen adicional ${idx + 1}`}
+                  fallbackSize={18}
+                />
+                <button
+                  type="button"
+                  className="catalog-gallery-remove"
+                  disabled={saving}
+                  aria-label={`Quitar imagen ${idx + 1} de la galería`}
+                  title="Quitar imagen"
+                  onClick={() =>
+                    updateField(
+                      'gallery_urls',
+                      form.gallery_urls.filter((itemUrl) => itemUrl !== url),
+                    )
+                  }
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <span className="text-xs text-muted">
+            Opcional. Agrega hasta {MAX_GALLERY_IMAGES} imágenes secundarias.
+          </span>
+        )}
+      </div>
+
       <div className="row-end">
         <Button variant="secondary" type="button" onClick={onCancel} disabled={saving}>
           Cancelar
@@ -407,8 +578,9 @@ export interface CatalogViewProps {
 
 export function CatalogView({ user }: CatalogViewProps) {
   const { settings } = useTheme();
-  const { can } = usePermissions(user);
+  const { can, canWriteMediaContext } = usePermissions(user);
   const canWrite = can('catalog:write');
+  const canUploadCatalogMedia = canWriteMediaContext('catalog');
   const { openDrawer, closeDrawer } = useDrawer();
   const { confirm } = useModal();
   const { toast } = useToast();
@@ -483,6 +655,7 @@ export function CatalogView({ user }: CatalogViewProps) {
             initialItem={item}
             categories={categories}
             defaultCurrency={settings.locale.currency}
+            canUploadMedia={canUploadCatalogMedia}
             onDirtyChange={(dirty) => {
               dirtyRef.current = dirty;
             }}
@@ -495,7 +668,15 @@ export function CatalogView({ user }: CatalogViewProps) {
         ),
       });
     },
-    [openDrawer, closeDrawer, categories, settings.locale.currency, loadData, typeFilter],
+    [
+      openDrawer,
+      closeDrawer,
+      categories,
+      settings.locale.currency,
+      canUploadCatalogMedia,
+      loadData,
+      typeFilter,
+    ],
   );
 
   const openCategoryDrawer = useCallback(
@@ -648,9 +829,22 @@ export function CatalogView({ user }: CatalogViewProps) {
         sortable: true,
         sortValue: (i) => i.name,
         render: (i) => (
-          <div className="stack-xs">
-            <span className="font-semibold">{i.name}</span>
-            {i.sku && <span className="text-xs text-muted">Código: {i.sku}</span>}
+          <div className="catalog-item-cell">
+            <div className="catalog-item-thumb">
+              <SafeCatalogImage src={i.image_url} alt={i.name} fallbackSize={18} />
+            </div>
+            <div className="stack-xs min-w-0">
+              <span className="font-semibold truncate">{i.name}</span>
+              {(i.sku || (i.gallery_urls && i.gallery_urls.length > 0)) && (
+                <span className="text-xs text-muted truncate">
+                  {i.sku ? `Código: ${i.sku}` : ''}
+                  {i.sku && i.gallery_urls?.length ? ' · ' : ''}
+                  {i.gallery_urls?.length
+                    ? `${i.gallery_urls.length} ${i.gallery_urls.length === 1 ? 'foto adicional' : 'fotos adicionales'}`
+                    : ''}
+                </span>
+              )}
+            </div>
           </div>
         ),
       },

@@ -10,6 +10,7 @@ pub struct AppState {
     pub item_repo: Arc<dyn CatalogItemRepository>,
     pub api_key_validator: Arc<dyn ApiKeyValidator>,
     pub jwt_validator: Option<Arc<dyn JwtValidator>>,
+    pub allow_http_urls: bool,
 }
 
 impl AppState {
@@ -23,12 +24,19 @@ impl AppState {
             item_repo,
             api_key_validator,
             jwt_validator: None,
+            allow_http_urls: false,
         }
     }
 
     #[must_use]
     pub fn with_jwt_validator(mut self, jwt_validator: Arc<dyn JwtValidator>) -> Self {
         self.jwt_validator = Some(jwt_validator);
+        self
+    }
+
+    #[must_use]
+    pub fn with_allow_http_urls(mut self, allow_http_urls: bool) -> Self {
+        self.allow_http_urls = allow_http_urls;
         self
     }
 }

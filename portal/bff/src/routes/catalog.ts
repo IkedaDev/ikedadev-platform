@@ -3,12 +3,52 @@ import { z } from 'zod';
 import { canWriteCatalog, forbiddenResponse } from '../auth/permissions.js';
 import { catalogClient } from '../clients/catalogClient.js';
 import { telemetryClient } from '../clients/telemetryClient.js';
+import { config } from '../config.js';
 import type {
   CreateCatalogItemCommand,
   Criteria,
   ItemDetails,
   UpdateCatalogItemCommand,
 } from '../types/platform.js';
+
+const MAX_IMAGE_URL_LEN = 2048;
+const MAX_GALLERY_URLS = 8;
+
+export function isSafeCatalogImageUrl(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > MAX_IMAGE_URL_LEN) return false;
+  if (/[\u0000-\u001F\u007F]/.test(trimmed)) return false;
+  if (trimmed.startsWith('//')) return false;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === 'https:') return Boolean(parsed.hostname);
+    if (parsed.protocol === 'http:' && !config.BFF_PUBLIC_URL.startsWith('https://')) {
+      return Boolean(parsed.hostname);
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+const safeImageUrlSchema = z
+  .string()
+  .trim()
+  .max(MAX_IMAGE_URL_LEN, `La URL de imagen no puede superar ${MAX_IMAGE_URL_LEN} caracteres`)
+  .refine(isSafeCatalogImageUrl, 'URL de imagen inválida (usa https://)');
+
+const optionalNullableImageUrlSchema = z.preprocess(
+  (val) => (typeof val === 'string' && val.trim() === '' ? null : val),
+  safeImageUrlSchema.nullable().optional(),
+);
+
+const galleryUrlsSchema = z
+  .array(safeImageUrlSchema)
+  .max(MAX_GALLERY_URLS, `La galería admite como máximo ${MAX_GALLERY_URLS} imágenes`)
+  .refine(
+    (urls) => new Set(urls).size === urls.length,
+    'La galería no puede contener URLs duplicadas',
+  );
 
 const createCategorySchema = z.object({
   parent_id: z.string().uuid().optional().nullable(),
@@ -67,6 +107,8 @@ const baseItemFields = {
   sku: z.string().optional().nullable(),
   name: z.string().trim().min(1, 'El nombre del ítem es obligatorio'),
   description: z.string().optional().nullable(),
+  image_url: optionalNullableImageUrlSchema,
+  gallery_urls: galleryUrlsSchema.optional(),
   base_price: z.coerce.number().int().min(0, 'base_price debe ser >= 0'),
   currency: z.string().length(3).optional().default('CLP'),
   tax_rate_bps: z.coerce.number().int().min(0).max(10000).optional(),
@@ -82,6 +124,8 @@ const updateItemSchema = z.object({
   sku: z.string().optional().nullable(),
   name: z.string().trim().min(1).optional(),
   description: z.string().optional().nullable(),
+  image_url: optionalNullableImageUrlSchema,
+  gallery_urls: galleryUrlsSchema.optional(),
   base_price: z.coerce.number().int().min(0).optional(),
   currency: z.string().length(3).optional(),
   tax_rate_bps: z.coerce.number().int().min(0).max(10000).optional(),
@@ -318,6 +362,8 @@ itemsRoutes.patch('/:id', async (c) => {
     sku: data.sku,
     name: data.name,
     description: data.description,
+    image_url: data.image_url,
+    gallery_urls: data.gallery_urls,
     base_price: data.base_price,
     currency: data.currency,
     tax_rate_bps: data.tax_rate_bps,

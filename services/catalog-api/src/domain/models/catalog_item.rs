@@ -3,8 +3,95 @@ use chrono::{DateTime, Utc};
 use ikeda_core::error::AppError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use url::Url;
 use utoipa::ToSchema;
 use uuid::Uuid;
+
+/// Maximum character length allowed for an image URL.
+pub const MAX_IMAGE_URL_LEN: usize = 2048;
+
+/// Maximum number of secondary images allowed in `gallery_urls`.
+pub const MAX_GALLERY_URLS: usize = 8;
+
+/// Validates an external/media image URL.
+///
+/// Allows `https://` always, and `http://` only when `allow_http` is `true` (local development).
+/// Rejects `javascript:`, `data:`, protocol-relative (`//...`), control characters, missing hosts,
+/// and URLs exceeding `MAX_IMAGE_URL_LEN` characters.
+pub fn validate_image_url(
+    raw: &str,
+    field_name: &str,
+    allow_http: bool,
+) -> Result<String, AppError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::BadRequest(format!(
+            "Catalog item '{field_name}' cannot be empty"
+        )));
+    }
+    if trimmed.len() > MAX_IMAGE_URL_LEN {
+        return Err(AppError::BadRequest(format!(
+            "Catalog item '{field_name}' exceeds maximum length of {MAX_IMAGE_URL_LEN} characters"
+        )));
+    }
+    if trimmed.chars().any(char::is_control) {
+        return Err(AppError::BadRequest(format!(
+            "Catalog item '{field_name}' contains invalid control characters"
+        )));
+    }
+    if trimmed.starts_with("//") {
+        return Err(AppError::BadRequest(format!(
+            "Catalog item '{field_name}' must be an absolute URL (protocol-relative URLs are not allowed)"
+        )));
+    }
+
+    let parsed = Url::parse(trimmed).map_err(|_| {
+        AppError::BadRequest(format!("Catalog item '{field_name}' is not a valid URL"))
+    })?;
+
+    match parsed.scheme() {
+        "https" => {}
+        "http" if allow_http => {}
+        other => {
+            return Err(AppError::BadRequest(format!(
+                "Catalog item '{field_name}' scheme '{other}' is not allowed; use https://"
+            )));
+        }
+    }
+
+    if parsed.host_str().is_none_or(str::is_empty) {
+        return Err(AppError::BadRequest(format!(
+            "Catalog item '{field_name}' must include a valid host"
+        )));
+    }
+
+    Ok(trimmed.to_string())
+}
+
+/// Validates and normalizes `gallery_urls` (maximum 8 unique valid image URLs).
+pub fn validate_gallery_urls(urls: &[String], allow_http: bool) -> Result<Vec<String>, AppError> {
+    if urls.len() > MAX_GALLERY_URLS {
+        return Err(AppError::BadRequest(format!(
+            "Catalog item 'gallery_urls' supports at most {MAX_GALLERY_URLS} images (received {})",
+            urls.len()
+        )));
+    }
+
+    let mut seen = HashSet::with_capacity(urls.len());
+    let mut normalized = Vec::with_capacity(urls.len());
+
+    for (idx, raw) in urls.iter().enumerate() {
+        let valid = validate_image_url(raw, &format!("gallery_urls[{idx}]"), allow_http)?;
+        if !seen.insert(valid.clone()) {
+            return Err(AppError::BadRequest(format!(
+                "Catalog item 'gallery_urls' contains duplicate URL '{valid}'"
+            )));
+        }
+        normalized.push(valid);
+    }
+
+    Ok(normalized)
+}
 
 /// Reference to a catalog item included inside a `Bundle`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -70,6 +157,11 @@ pub struct CatalogItem {
     pub name: String,
     /// Optional description.
     pub description: Option<String>,
+    /// Optional primary/cover image URL (`https://`, or `http://` in local dev).
+    pub image_url: Option<String>,
+    /// Optional secondary gallery image URLs (maximum 8, unique).
+    #[serde(default)]
+    pub gallery_urls: Vec<String>,
     /// Base price in minimal currency units (e.g. CLP or cents; `>= 0`).
     pub base_price: i64,
     /// ISO 4217 3-letter uppercase currency code (e.g. `CLP`, `USD`).
@@ -104,6 +196,8 @@ pub struct NewCatalogItemParams {
     pub sku: Option<String>,
     pub name: String,
     pub description: Option<String>,
+    pub image_url: Option<String>,
+    pub gallery_urls: Vec<String>,
     pub base_price: i64,
     pub currency: String,
     pub tax_rate_bps: i32,
@@ -114,9 +208,27 @@ pub struct NewCatalogItemParams {
 }
 
 impl CatalogItem {
-    /// Constructs and validates a new active `CatalogItem`.
+    /// Constructs and validates a new active `CatalogItem` (strict `https://` URL policy).
     pub fn new(params: NewCatalogItemParams) -> Result<Self, AppError> {
+        Self::new_with_options(params, false)
+    }
+
+    /// Constructs and validates a new active `CatalogItem` with configurable HTTP URL policy.
+    pub fn new_with_options(
+        params: NewCatalogItemParams,
+        allow_http_urls: bool,
+    ) -> Result<Self, AppError> {
         let now = Utc::now();
+        let image_url = params.image_url.and_then(|raw| {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
+        let gallery_urls = validate_gallery_urls(&params.gallery_urls, allow_http_urls)?;
+
         let item = Self {
             id: Uuid::new_v4(),
             tenant_id: params.tenant_id,
@@ -124,6 +236,8 @@ impl CatalogItem {
             sku: params.sku,
             name: params.name.trim().to_string(),
             description: params.description,
+            image_url,
+            gallery_urls,
             base_price: params.base_price,
             currency: params.currency.trim().to_uppercase(),
             tax_rate_bps: params.tax_rate_bps,
@@ -136,17 +250,28 @@ impl CatalogItem {
             updated_at: now,
             deleted_at: None,
         };
-        item.validate()?;
+        item.validate_with_options(allow_http_urls)?;
         Ok(item)
     }
 
-    /// Validates all domain invariants for this catalog item.
+    /// Validates all domain invariants for this catalog item (strict `https://` URL policy).
     pub fn validate(&self) -> Result<(), AppError> {
+        self.validate_with_options(false)
+    }
+
+    /// Validates all domain invariants for this catalog item with configurable HTTP URL policy.
+    pub fn validate_with_options(&self, allow_http_urls: bool) -> Result<(), AppError> {
         if self.name.trim().is_empty() {
             return Err(AppError::BadRequest(
                 "Catalog item 'name' cannot be empty".to_string(),
             ));
         }
+
+        if let Some(ref url) = self.image_url {
+            validate_image_url(url, "image_url", allow_http_urls)?;
+        }
+
+        validate_gallery_urls(&self.gallery_urls, allow_http_urls)?;
 
         if self.base_price < 0 {
             return Err(AppError::BadRequest(

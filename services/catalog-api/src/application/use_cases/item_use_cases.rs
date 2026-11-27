@@ -1,4 +1,6 @@
-use crate::domain::models::{CatalogItem, ItemDetails, NewCatalogItemParams};
+use crate::domain::models::{
+    validate_gallery_urls, CatalogItem, ItemDetails, NewCatalogItemParams,
+};
 use crate::domain::repositories::{CatalogItemRepository, CategoryRepository};
 use ikeda_core::criteria::Criteria;
 use ikeda_core::error::AppError;
@@ -12,6 +14,14 @@ use uuid::Uuid;
 /// Maximum number of item IDs accepted in a single batch lookup request.
 pub const MAX_BATCH_IDS: usize = 100;
 
+/// Deserializes an explicit JSON `null` as `Some(None)` while omitted fields default to `None`.
+fn deserialize_double_option<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Some(Option::<String>::deserialize(deserializer)?))
+}
+
 /// Request payload for creating a new catalog item (`SERVICE`, `PRODUCT`, or `BUNDLE`).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateCatalogItemCommand {
@@ -19,6 +29,9 @@ pub struct CreateCatalogItemCommand {
     pub sku: Option<String>,
     pub name: String,
     pub description: Option<String>,
+    pub image_url: Option<String>,
+    #[serde(default)]
+    pub gallery_urls: Vec<String>,
     pub base_price: i64,
     pub currency: Option<String>,
     pub tax_rate_bps: Option<i32>,
@@ -36,6 +49,16 @@ pub struct UpdateCatalogItemCommand {
     pub sku: Option<String>,
     pub name: Option<String>,
     pub description: Option<String>,
+    /// Cover image URL. Omit to leave unchanged; pass `null` or `""` to clear.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_double_option"
+    )]
+    #[schema(value_type = Option<String>, nullable = true)]
+    pub image_url: Option<Option<String>>,
+    /// Secondary gallery image URLs (maximum 8, unique). Omit to leave unchanged.
+    pub gallery_urls: Option<Vec<String>>,
     pub base_price: Option<i64>,
     pub currency: Option<String>,
     pub tax_rate_bps: Option<i32>,
@@ -66,6 +89,7 @@ pub(crate) fn normalize_optional_str(input: Option<String>) -> Option<String> {
 pub struct CreateCatalogItemUseCase {
     category_repo: Arc<dyn CategoryRepository>,
     item_repo: Arc<dyn CatalogItemRepository>,
+    allow_http_urls: bool,
 }
 
 impl CreateCatalogItemUseCase {
@@ -76,7 +100,14 @@ impl CreateCatalogItemUseCase {
         Self {
             category_repo,
             item_repo,
+            allow_http_urls: false,
         }
+    }
+
+    #[must_use]
+    pub fn with_allow_http_urls(mut self, allow_http_urls: bool) -> Self {
+        self.allow_http_urls = allow_http_urls;
+        self
     }
 
     pub async fn execute(
@@ -105,20 +136,25 @@ impl CreateCatalogItemUseCase {
             }
         }
 
-        let item = CatalogItem::new(NewCatalogItemParams {
-            tenant_id,
-            category_id: cmd.category_id,
-            sku,
-            name: cmd.name,
-            description: normalize_optional_str(cmd.description),
-            base_price: cmd.base_price,
-            currency: cmd.currency.unwrap_or_else(|| "CLP".to_string()),
-            tax_rate_bps: cmd.tax_rate_bps.unwrap_or(0),
-            tax_included: cmd.tax_included.unwrap_or(true),
-            details: cmd.details,
-            is_active: cmd.is_active.unwrap_or(true),
-            metadata: cmd.metadata.unwrap_or_else(|| serde_json::json!({})),
-        })?;
+        let item = CatalogItem::new_with_options(
+            NewCatalogItemParams {
+                tenant_id,
+                category_id: cmd.category_id,
+                sku,
+                name: cmd.name,
+                description: normalize_optional_str(cmd.description),
+                image_url: normalize_optional_str(cmd.image_url),
+                gallery_urls: cmd.gallery_urls,
+                base_price: cmd.base_price,
+                currency: cmd.currency.unwrap_or_else(|| "CLP".to_string()),
+                tax_rate_bps: cmd.tax_rate_bps.unwrap_or(0),
+                tax_included: cmd.tax_included.unwrap_or(true),
+                details: cmd.details,
+                is_active: cmd.is_active.unwrap_or(true),
+                metadata: cmd.metadata.unwrap_or_else(|| serde_json::json!({})),
+            },
+            self.allow_http_urls,
+        )?;
 
         // Verify all bundle component item_ids exist in the same tenant
         if let ItemDetails::Bundle { ref items } = item.details {
@@ -226,6 +262,7 @@ impl SearchCatalogItemsUseCase {
 pub struct UpdateCatalogItemUseCase {
     category_repo: Arc<dyn CategoryRepository>,
     item_repo: Arc<dyn CatalogItemRepository>,
+    allow_http_urls: bool,
 }
 
 impl UpdateCatalogItemUseCase {
@@ -236,7 +273,14 @@ impl UpdateCatalogItemUseCase {
         Self {
             category_repo,
             item_repo,
+            allow_http_urls: false,
         }
+    }
+
+    #[must_use]
+    pub fn with_allow_http_urls(mut self, allow_http_urls: bool) -> Self {
+        self.allow_http_urls = allow_http_urls;
+        self
     }
 
     pub async fn execute(
@@ -287,6 +331,14 @@ impl UpdateCatalogItemUseCase {
             item.description = normalize_optional_str(Some(description));
         }
 
+        if let Some(raw_image_url) = cmd.image_url {
+            item.image_url = normalize_optional_str(raw_image_url);
+        }
+
+        if let Some(raw_gallery) = cmd.gallery_urls {
+            item.gallery_urls = validate_gallery_urls(&raw_gallery, self.allow_http_urls)?;
+        }
+
         if let Some(base_price) = cmd.base_price {
             item.base_price = base_price;
         }
@@ -315,7 +367,7 @@ impl UpdateCatalogItemUseCase {
             item.metadata = metadata;
         }
 
-        item.validate()?;
+        item.validate_with_options(self.allow_http_urls)?;
 
         if let ItemDetails::Bundle { ref items } = item.details {
             if !items.is_empty() {

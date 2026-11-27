@@ -146,6 +146,7 @@ services:
       IDENTITY_DATABASE_URL: "postgres://${IKEDA_APP_USER:-ikeda_app}:${IKEDA_APP_PASSWORD:-ikeda_app_password}@postgres:5432/identity_db?sslmode=disable"
       JWKS_URI: "${JWKS_URI:-http://keycloak:8080/realms/ikeda/protocol/openid-connect/certs}"
       JWT_ISSUER: "${JWT_ISSUER:-http://localhost:8180/realms/ikeda}"
+      ALLOW_INSECURE_HTTP_URLS: "${ALLOW_INSECURE_HTTP_URLS:-true}"
       LOG_FORMAT: "${LOG_FORMAT:-json}"
       RUST_LOG: "info,catalog_api=debug,tower_http=info"
     ports:

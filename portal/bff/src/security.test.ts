@@ -25,6 +25,7 @@ import {
 } from './config.js';
 import { authRoutes, signOidcTx, verifyOidcTx } from './routes/auth.js';
 import { bookingsRoutes } from './routes/bookings.js';
+import { itemsRoutes } from './routes/catalog.js';
 import { clientsRoutes } from './routes/clients.js';
 import { contentRoutes } from './routes/content.js';
 import { identityRoutes } from './routes/identity.js';
@@ -605,6 +606,8 @@ describe('[BFF-08] Booking Orchestration Resilience', () => {
         sku: 'S1',
         name: 'Corte',
         description: null,
+        image_url: null,
+        gallery_urls: [],
         base_price: 10000,
         currency: 'CLP',
         tax_rate_bps: 1900,
@@ -960,6 +963,78 @@ describe('[BFF-12] Lightweight Session RBAC Pre-Validation', () => {
       });
       assert.equal(res.status, 403, `Expected 403 on ${method} ${path}`);
     }
+    assert.equal(fetchCalled, false);
+  });
+});
+
+describe('[BFF-13] Catalog Items — Image URL & Gallery Validation', () => {
+  function mountItemsApp() {
+    const app = new Hono();
+    app.use('/api/items/*', async (c, next) => {
+      c.set('tenantId' as never, TENANT_A_ID as never);
+      c.set('roles' as never, ['tenant:admin'] as never);
+      c.set('authMethod' as never, 'session' as never);
+      c.set('authorization' as never, 'Bearer user-catalog-jwt' as never);
+      await next();
+    });
+    app.route('/api/items', itemsRoutes);
+    return app;
+  }
+
+  it('rejects unsafe image_url and gallery_urls (javascript:, data:image/svg+xml, //...) on POST and PATCH before calling catalog-api', async () => {
+    let fetchCalled = false;
+    globalThis.fetch = (async () => {
+      fetchCalled = true;
+      return new Response(JSON.stringify({ success: true, data: {} }), { status: 200 });
+    }) as typeof fetch;
+
+    const app = mountItemsApp();
+    const unsafeUrls = [
+      'javascript:alert(1)',
+      'data:image/svg+xml,<svg onload=alert(1)>',
+      '//evil.example/img.png',
+    ];
+
+    for (const badUrl of unsafeUrls) {
+      const postCover = await app.request('/api/items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Producto Malicioso',
+          item_type: 'PRODUCT',
+          base_price: 1000,
+          image_url: badUrl,
+        }),
+      });
+      assert.equal(postCover.status, 400, `Expected 400 on POST image_url=${badUrl}`);
+
+      const postGallery = await app.request('/api/items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Producto Galería Maliciosa',
+          item_type: 'PRODUCT',
+          base_price: 1000,
+          gallery_urls: ['https://cdn.kropy.cl/ok.webp', badUrl],
+        }),
+      });
+      assert.equal(postGallery.status, 400, `Expected 400 on POST gallery_urls=${badUrl}`);
+
+      const patchCover = await app.request(`/api/items/${TENANT_A_ID}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_url: badUrl }),
+      });
+      assert.equal(patchCover.status, 400, `Expected 400 on PATCH image_url=${badUrl}`);
+
+      const patchGallery = await app.request(`/api/items/${TENANT_A_ID}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gallery_urls: [badUrl] }),
+      });
+      assert.equal(patchGallery.status, 400, `Expected 400 on PATCH gallery_urls=${badUrl}`);
+    }
+
     assert.equal(fetchCalled, false);
   });
 });
