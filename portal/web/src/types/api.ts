@@ -47,6 +47,7 @@ export interface BffHealth {
     catalog: { ok: boolean; status: number };
     bookings?: { ok: boolean; status: number };
     telemetry?: { ok: boolean; status: number };
+    content?: { ok: boolean; status: number };
     keycloak?: { ok: boolean; status: number };
   };
 }
@@ -73,6 +74,7 @@ export interface TenantFeatures {
   events: boolean;
   bookings: boolean;
   telemetry: boolean;
+  content: boolean;
 }
 
 export interface TenantSettings {
@@ -314,4 +316,117 @@ export interface TelemetryMetricsSummary {
   unique_clients: number;
   unique_sessions: number;
   by_event_name: TelemetryEventCount[];
+}
+
+export type ArticleStatus = 'DRAFT' | 'SCHEDULED' | 'PUBLISHED' | 'ARCHIVED';
+
+export interface ArticleSeo {
+  meta_title?: string | null;
+  meta_description?: string | null;
+  canonical_url?: string | null;
+  og_image_url?: string | null;
+  noindex?: boolean;
+}
+
+export interface ContentCategory {
+  id: string;
+  tenant_id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  display_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ContentTag {
+  id: string;
+  tenant_id: string;
+  name: string;
+  slug: string;
+  created_at: string;
+}
+
+export interface Article {
+  id: string;
+  tenant_id: string;
+  category_id: string | null;
+  category?: ContentCategory | null;
+  tags: ContentTag[];
+  slug: string;
+  title: string;
+  excerpt: string | null;
+  content_json: Record<string, unknown>;
+  content_html: string;
+  cover_image_url: string | null;
+  status: ArticleStatus;
+  published_at: string | null;
+  scheduled_for: string | null;
+  author_id: string | null;
+  author_name_snapshot: string | null;
+  word_count: number;
+  reading_time_minutes: number;
+  seo: ArticleSeo;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ArticleRevision {
+  id: string;
+  article_id: string;
+  version_number: number;
+  title: string;
+  content_json: Record<string, unknown>;
+  content_html: string;
+  edited_by: string | null;
+  created_at: string;
+}
+
+export interface PreviewTokenResponse {
+  token: string;
+  expires_at: string;
+  preview_path: string;
+}
+
+export interface MediaAsset {
+  id: string;
+  tenant_id: string;
+  storage_provider: string;
+  file_name: string;
+  storage_key: string;
+  public_url: string;
+  mime_type: string;
+  size_bytes: number;
+  alt_text: string | null;
+  uploaded_by: string | null;
+  created_at: string;
+}
+
+export interface PresignedUpload {
+  asset_id: string;
+  storage_provider: string;
+  storage_key: string;
+  upload_url: string;
+  public_url: string;
+  expires_in_seconds: number;
+}
+
+export interface PublishWebhook {
+  id: string;
+  tenant_id: string;
+  name: string;
+  target_url: string;
+  events: string[];
+  is_active: boolean;
+  last_triggered_at: string | null;
+  last_status_code: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WebhookTestResult {
+  webhook_id: string;
+  status_code: number;
+  ok: boolean;
 }

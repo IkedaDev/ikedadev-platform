@@ -32,6 +32,9 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
 
     SELECT 'CREATE DATABASE telemetry_db'
     WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'telemetry_db')\gexec
+
+    SELECT 'CREATE DATABASE content_db'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'content_db')\gexec
 EOSQL
 
 apply_migrations() {
@@ -120,6 +123,7 @@ apply_migrations "identity_db"  "/migrations/identity"
 apply_migrations "catalog_db"   "/migrations/catalog"
 apply_migrations "bookings_db"  "/migrations/bookings"
 apply_migrations "telemetry_db" "/migrations/telemetry"
+apply_migrations "content_db"   "/migrations/content"
 
 grant_app_privileges "events_db"
 grant_app_privileges "crm_db"
@@ -127,6 +131,7 @@ grant_app_privileges "identity_db"
 grant_app_privileges "catalog_db"
 grant_app_privileges "bookings_db"
 grant_app_privileges "telemetry_db"
+grant_app_privileges "content_db"
 
 # Seed a deterministic local development tenant + API key in identity_db
 DEV_TENANT_ID="11111111-1111-4111-8111-111111111111"
@@ -145,7 +150,7 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "identity_db" <<-EO
         'ACTIVE',
         '{"env": "local"}'::jsonb
     )
-    ON CONFLICT (slug) DO NOTHING;
+    ON CONFLICT (id) DO NOTHING;
 
     SELECT set_config('app.current_tenant', '${DEV_TENANT_ID}', true);
 
@@ -155,7 +160,7 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "identity_db" <<-EO
         'Local Tenant Portal BFF Key',
         '${DEV_API_KEY_PREFIX}',
         '${DEV_API_KEY_HASH}',
-        ARRAY['tenant:admin', 'platform:admin', 'events:write', 'crm:write', 'catalog:write', 'identity:write', 'bookings:write', 'telemetry:read', 'telemetry:write'],
+        ARRAY['tenant:admin', 'platform:admin', 'events:write', 'crm:write', 'catalog:write', 'identity:write', 'bookings:write', 'telemetry:read', 'telemetry:write', 'content:read', 'content:write', 'content:publish'],
         true
     )
     ON CONFLICT (key_hash) DO NOTHING;
@@ -166,7 +171,7 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "identity_db" <<-EO
         '22222222-2222-4222-8222-222222222222',
         'admin@demo.ikedadev.com',
         'Admin Demo Tenant',
-        ARRAY['platform:admin', 'tenant:admin', 'events:write', 'crm:write', 'catalog:write', 'identity:write', 'bookings:write', 'telemetry:read', 'telemetry:write'],
+        ARRAY['platform:admin', 'tenant:admin', 'events:write', 'crm:write', 'catalog:write', 'identity:write', 'bookings:write', 'telemetry:read', 'telemetry:write', 'content:read', 'content:write', 'content:publish'],
         true
     )
     ON CONFLICT (keycloak_user_id) DO NOTHING;
@@ -177,7 +182,7 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "identity_db" <<-EO
         '33333333-3333-4333-8333-333333333333',
         'staff@demo.ikedadev.com',
         'Staff Demo Tenant',
-        ARRAY['tenant:member', 'events:write', 'crm:write', 'bookings:write', 'telemetry:read', 'telemetry:write'],
+        ARRAY['tenant:member', 'events:write', 'crm:write', 'bookings:write', 'telemetry:read', 'telemetry:write', 'content:read', 'content:write'],
         true
     )
     ON CONFLICT (keycloak_user_id) DO NOTHING;

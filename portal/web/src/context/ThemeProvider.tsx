@@ -37,6 +37,7 @@ export const KROPY_DEFAULT_SETTINGS: TenantSettings = {
     events: true,
     bookings: true,
     telemetry: true,
+    content: true,
   },
 };
 

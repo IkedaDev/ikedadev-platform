@@ -32,6 +32,7 @@ services:
       - ./services/catalog-api/migrations:/migrations/catalog:ro
       - ./services/bookings-api/migrations:/migrations/bookings:ro
       - ./services/telemetry-api/migrations:/migrations/telemetry:ro
+      - ./services/content-api/migrations:/migrations/content:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d identity_db"]
       interval: 3s
@@ -200,6 +201,34 @@ services:
       RUST_LOG: "info,telemetry_api=debug,tower_http=info"
     ports:
       - "127.0.0.1:8085:8085"
+
+  # ============================================================================
+  # 8. Content API (Rust Axum Headless CMS Microservice - Port 8086)
+  #    Profiles: content | apis | full
+  # ============================================================================
+  content-api:
+    container_name: ikedadev-content-api
+    profiles: ["content", "apis", "full"]
+    build:
+      context: .
+      dockerfile: services/content-api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: "8086"
+      HOST: "0.0.0.0"
+      DATABASE_URL: "postgres://${IKEDA_APP_USER:-ikeda_app}:${IKEDA_APP_PASSWORD:-ikeda_app_password}@postgres:5432/content_db?sslmode=disable"
+      IDENTITY_DATABASE_URL: "postgres://${IKEDA_APP_USER:-ikeda_app}:${IKEDA_APP_PASSWORD:-ikeda_app_password}@postgres:5432/identity_db?sslmode=disable"
+      JWKS_URI: "${JWKS_URI:-http://keycloak:8080/realms/ikeda/protocol/openid-connect/certs}"
+      JWT_ISSUER: "${JWT_ISSUER:-http://localhost:8180/realms/ikeda}"
+      PREVIEW_TOKEN_SECRET: "${PREVIEW_TOKEN_SECRET:-dev-preview-token-secret-change-in-production}"
+      ALLOW_INSECURE_HTTP_URLS: "${ALLOW_INSECURE_HTTP_URLS:-true}"
+      LOG_FORMAT: "${LOG_FORMAT:-json}"
+      RUST_LOG: "info,content_api=debug,tower_http=info"
+    ports:
+      - "127.0.0.1:8086:8086"
 
   # ============================================================================
   # 8. Keycloak Dev Server with Auto-Imported `ikeda` Realm (Port 8180)

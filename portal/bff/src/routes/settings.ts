@@ -62,6 +62,7 @@ export const DEFAULT_TENANT_SETTINGS: TenantSettings = {
     events: true,
     bookings: true,
     telemetry: true,
+    content: true,
   },
 };
 
@@ -110,6 +111,7 @@ const featuresPatchSchema = z.object({
   events: z.boolean().optional(),
   bookings: z.boolean().optional(),
   telemetry: z.boolean().optional(),
+  content: z.boolean().optional(),
 });
 
 const patchSettingsSchema = z
@@ -227,6 +229,10 @@ function mergeTenantConfigWithDefaults(rawConfig: unknown): TenantSettings {
       typeof rawFeatures.telemetry === 'boolean'
         ? rawFeatures.telemetry
         : DEFAULT_TENANT_SETTINGS.features.telemetry,
+    content:
+      typeof rawFeatures.content === 'boolean'
+        ? rawFeatures.content
+        : DEFAULT_TENANT_SETTINGS.features.content,
   };
 
   return { branding, locale, features };

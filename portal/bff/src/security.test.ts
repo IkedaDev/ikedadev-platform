@@ -26,6 +26,7 @@ import {
 import { authRoutes, signOidcTx, verifyOidcTx } from './routes/auth.js';
 import { bookingsRoutes } from './routes/bookings.js';
 import { clientsRoutes } from './routes/clients.js';
+import { contentRoutes } from './routes/content.js';
 import { identityRoutes } from './routes/identity.js';
 import {
   cacheTenantBranding,
@@ -744,5 +745,76 @@ describe('[BFF-09] Public Branding Cache Bounds, TTL & logoUrl Sanitization', ()
     const res = await app.request('/api/branding/expired-slug');
     const json = (await res.json()) as { data: { branding: { displayName: string } } };
     assert.equal(json.data.branding.displayName, 'Kropy');
+  });
+});
+
+describe('[BFF-10] Content CMS Routes — Bearer-Only Auth & Strict UUID Validation', () => {
+  function mountContentApp() {
+    const app = new Hono();
+    app.use('/api/content/*', async (c, next) => {
+      c.set('tenantId' as never, TENANT_A_ID as never);
+      c.set('roles' as never, ['tenant:admin'] as never);
+      c.set('authMethod' as never, 'session' as never);
+      c.set('authorization' as never, 'Bearer user-content-jwt' as never);
+      await next();
+    });
+    app.route('/api/content', contentRoutes);
+    return app;
+  }
+
+  it('rejects non-UUID path parameters with 422 before calling content-api', async () => {
+    let fetchCalled = false;
+    globalThis.fetch = (async () => {
+      fetchCalled = true;
+      return new Response(JSON.stringify({ success: true, data: {} }), { status: 200 });
+    }) as typeof fetch;
+
+    const app = mountContentApp();
+    for (const [method, path] of [
+      ['GET', '/api/content/articles/not-a-uuid'],
+      ['PATCH', '/api/content/articles/not-a-uuid'],
+      ['DELETE', '/api/content/articles/not-a-uuid'],
+      ['PATCH', '/api/content/categories/bad-id'],
+      ['DELETE', '/api/content/tags/bad-id'],
+      ['DELETE', '/api/content/media/bad-id'],
+      ['POST', '/api/content/webhooks/bad-id/test'],
+    ] as const) {
+      const res = await app.request(path, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: method === 'PATCH' ? JSON.stringify({ title: 'x' }) : undefined,
+      });
+      assert.equal(res.status, 422, `Expected 422 on ${method} ${path}`);
+    }
+    assert.equal(fetchCalled, false);
+  });
+
+  it('forwards only Bearer token (never X-Api-Key) to content-api', async () => {
+    let capturedHeaders: Record<string, string> = {};
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      capturedHeaders = (init?.headers ?? {}) as Record<string, string>;
+      return new Response(
+        JSON.stringify({
+          success: true,
+          data: [],
+          pagination: {
+            page: 1,
+            limit: 20,
+            total_items: 0,
+            total_pages: 0,
+            has_next_page: false,
+            has_prev_page: false,
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as typeof fetch;
+
+    const app = mountContentApp();
+    const res = await app.request('/api/content/articles');
+    assert.equal(res.status, 200);
+    const headerKeysLower = Object.keys(capturedHeaders).map((k) => k.toLowerCase());
+    assert.equal(capturedHeaders['Authorization'], 'Bearer user-content-jwt');
+    assert.equal(headerKeysLower.includes('x-api-key'), false);
   });
 });

@@ -10,6 +10,7 @@ import { isSafeRedirectUrl } from './utils/url';
 import { BookingsView } from './views/BookingsView';
 import { CatalogView } from './views/CatalogView';
 import { ClientsView } from './views/ClientsView';
+import { ContentView } from './views/ContentView';
 import { DashboardView } from './views/DashboardView';
 import { IdentityView } from './views/IdentityView';
 import { LoginView } from './views/LoginView';
@@ -207,6 +208,7 @@ export function App() {
       {section === 'clients' && settings.features.crm !== false && <ClientsView />}
       {section === 'catalog' && settings.features.catalog !== false && <CatalogView />}
       {section === 'bookings' && settings.features.bookings !== false && <BookingsView />}
+      {section === 'content' && settings.features.content !== false && <ContentView user={user} />}
       {section === 'telemetry' && settings.features.telemetry !== false && <TelemetryView />}
       {section === 'identity' && <IdentityView />}
       {section === 'settings' && <SettingsView onDirtyChange={handleSettingsDirtyChange} />}

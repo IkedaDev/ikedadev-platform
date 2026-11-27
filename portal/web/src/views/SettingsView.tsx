@@ -90,6 +90,11 @@ const FEATURE_MODULES: Array<{
     label: 'Actividad',
     description: 'Historial de acciones y cambios del equipo.',
   },
+  {
+    key: 'content',
+    label: 'Contenido / Blog',
+    description: 'Editor visual de artículos, categorías, biblioteca de medios y Deploy Hooks SSG.',
+  },
 ];
 
 const HEX_REGEX = /^#[0-9a-fA-F]{6}$/;

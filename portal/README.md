@@ -1,6 +1,6 @@
 # IkedaDev SaaS Portal (`portal/bff` + `portal/web`)
 
-Portal administrativo multi-tenant promovido como aplicación de primera clase dentro de `ikedadev-platform`. Integra de punta a punta los **6 microservicios en Rust** (`events-api`, `crm-api`, `identity-api`, `catalog-api`, `bookings-api` y `telemetry-api`) con **autenticación OIDC de producción mediante Keycloak**, **Design System Kropy** con personalización dinámica por tenant (`tenants.config`), trazabilidad `X-Request-Id` y telemetría/auditoría en tiempo real.
+Portal administrativo multi-tenant promovido como aplicación de primera clase dentro de `ikedadev-platform`. Integra de punta a punta los **7 microservicios en Rust** (`events-api`, `crm-api`, `identity-api`, `catalog-api`, `bookings-api`, `telemetry-api` y `content-api`) con **autenticación OIDC de producción mediante Keycloak**, **Design System Kropy** con personalización dinámica por tenant (`tenants.config`), editor visual **TipTap** para Blog/CMS, trazabilidad `X-Request-Id` y telemetría/auditoría en tiempo real.
 
 ---
 
@@ -22,7 +22,8 @@ Portal BFF (portal/bff — Hono + Zod + Node 22 :4000)
         ├──► identity-api  (:8082)  Valida RS256 JWKS + usuarios Keycloak + `tenants.config`
         ├──► catalog-api   (:8083)  Valida RS256 JWKS + claim `tenant_id` (RLS)
         ├──► bookings-api  (:8084)  Reservas multi-servicio (snapshots + estados + idempotencia)
-        └──► telemetry-api (:8085)  Eventos append-only (`TRACKING` / `AUDIT`), timeline y métricas (RLS)
+        ├──► telemetry-api (:8085)  Eventos append-only (`TRACKING` / `AUDIT`), timeline y métricas (RLS)
+        └──► content-api   (:8086)  Headless CMS (Artículos TipTap, Media Library R2/BYOS, SSR+SSG, RLS)
 ```
 
 ---
@@ -42,7 +43,7 @@ Cada tenant almacena su configuración en la columna JSONB `tenants.config` de `
 
 - **Branding:** `displayName`, `logoUrl`, `primaryColor` (`#RRGGBB`), `accentColor`, `themeMode` (`light` | `dark` | `system`).
 - **Regionalización:** `currency` (`CLP`, `USD`, `EUR`, `MXN`, `ARS`, `COP`, `PEN`), `timezone` y `language` (`es`, `en`).
-- **Feature Toggles de Módulos (`features`):** `crm`, `catalog`, `events`, `bookings`, `telemetry`. Desactivar un módulo oculta su entrada en el `Sidebar` y protege la ruta automáticamente.
+- **Feature Toggles de Módulos (`features`):** `crm`, `catalog`, `events`, `bookings`, `telemetry`, `content`. Desactivar un módulo oculta su entrada en el `Sidebar` y protege la ruta automáticamente.
 
 ### Endpoints de Configuración y Branding en `portal/bff`
 

@@ -6,6 +6,7 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { checkKeycloakHealth } from './auth/sessionStore.js';
 import { bookingsClient } from './clients/bookingsClient.js';
 import { catalogClient } from './clients/catalogClient.js';
+import { contentClient } from './clients/contentClient.js';
 import { crmClient } from './clients/crmClient.js';
 import { eventsClient } from './clients/eventsClient.js';
 import { UpstreamApiError } from './clients/http.js';
@@ -19,6 +20,7 @@ import { bookingsRoutes } from './routes/bookings.js';
 import { calendarsRoutes } from './routes/calendars.js';
 import { categoriesRoutes, itemsRoutes } from './routes/catalog.js';
 import { clientsRoutes } from './routes/clients.js';
+import { contentRoutes } from './routes/content.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { identityRoutes } from './routes/identity.js';
 import { publicBrandingRoutes, settingsRoutes } from './routes/settings.js';
@@ -43,17 +45,19 @@ app.use(
 
 // Public Health endpoint with upstream microservice & Keycloak checks
 app.get('/health', async (c) => {
-  const [events, crm, identity, catalog, bookings, telemetry, keycloak] = await Promise.all([
-    eventsClient.health(),
-    crmClient.health(),
-    identityClient.health(),
-    catalogClient.health(),
-    bookingsClient.health(),
-    telemetryClient.health(),
-    checkKeycloakHealth(),
-  ]);
+  const [events, crm, identity, catalog, bookings, telemetry, content, keycloak] =
+    await Promise.all([
+      eventsClient.health(),
+      crmClient.health(),
+      identityClient.health(),
+      catalogClient.health(),
+      bookingsClient.health(),
+      telemetryClient.health(),
+      contentClient.health(),
+      checkKeycloakHealth(),
+    ]);
 
-  const services = { events, crm, identity, catalog, bookings, telemetry, keycloak };
+  const services = { events, crm, identity, catalog, bookings, telemetry, content, keycloak };
   const allHealthy = Object.values(services).every((s) => s.ok);
 
   return c.json({
@@ -83,6 +87,7 @@ app.route('/api/items', itemsRoutes);
 app.route('/api/calendars', calendarsRoutes);
 app.route('/api/identity', identityRoutes);
 app.route('/api/telemetry', telemetryRoutes);
+app.route('/api/content', contentRoutes);
 
 app.notFound((c) =>
   c.json(
@@ -139,5 +144,6 @@ serve(
     console.log(`   CATALOG_API_URL:   ${config.CATALOG_API_URL}`);
     console.log(`   BOOKINGS_API_URL:  ${config.BOOKINGS_API_URL}`);
     console.log(`   TELEMETRY_API_URL: ${config.TELEMETRY_API_URL}`);
+    console.log(`   CONTENT_API_URL:   ${config.CONTENT_API_URL}`);
   },
 );

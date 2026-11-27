@@ -52,6 +52,7 @@ export const envSchema = z
     CATALOG_API_URL: z.string().url().default('http://localhost:8083'),
     BOOKINGS_API_URL: z.string().url().default('http://localhost:8084'),
     TELEMETRY_API_URL: z.string().url().default('http://localhost:8085'),
+    CONTENT_API_URL: z.string().url().default('http://localhost:8086'),
   })
   .superRefine((data, ctx) => {
     const rawOrigins = data.CORS_ORIGIN.split(',')

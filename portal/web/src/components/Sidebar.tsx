@@ -1,6 +1,7 @@
 import {
   Activity,
   CalendarClock,
+  FileText,
   LayoutDashboard,
   Package,
   RefreshCw,
@@ -19,6 +20,7 @@ export type NavSection =
   | 'clients'
   | 'catalog'
   | 'bookings'
+  | 'content'
   | 'telemetry'
   | 'identity'
   | 'settings';
@@ -40,6 +42,13 @@ export const NAV_ITEMS: NavItemConfig[] = [
     label: 'Agenda y Reservas',
     icon: CalendarClock,
     featureKey: 'bookings',
+    section: 'main',
+  },
+  {
+    id: 'content',
+    label: 'Contenido / Blog',
+    icon: FileText,
+    featureKey: 'content',
     section: 'main',
   },
   {

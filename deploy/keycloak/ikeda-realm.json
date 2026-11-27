@@ -35,7 +35,10 @@
       { "name": "identity:write", "description": "Write access to identity-api" },
       { "name": "bookings:write", "description": "Write access to bookings-api" },
       { "name": "telemetry:read", "description": "Read access to telemetry-api" },
-      { "name": "telemetry:write", "description": "Write access to telemetry-api" }
+      { "name": "telemetry:write", "description": "Write access to telemetry-api" },
+      { "name": "content:read", "description": "Read access to content-api (articles, taxonomies, media, previews)" },
+      { "name": "content:write", "description": "Write access to content-api (draft articles, taxonomies, media)" },
+      { "name": "content:publish", "description": "Publish, schedule, archive, delete articles and manage SSG Deploy Hooks" }
     ]
   },
   "clients": [
@@ -143,7 +146,10 @@
         "identity:write",
         "bookings:write",
         "telemetry:read",
-        "telemetry:write"
+        "telemetry:write",
+        "content:read",
+        "content:write",
+        "content:publish"
       ]
     },
     {
@@ -170,7 +176,9 @@
         "crm:write",
         "bookings:write",
         "telemetry:read",
-        "telemetry:write"
+        "telemetry:write",
+        "content:read",
+        "content:write"
       ]
     }
   ]
