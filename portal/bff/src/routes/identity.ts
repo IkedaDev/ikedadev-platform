@@ -1,7 +1,12 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import type { RequestContext } from '../clients/http.js';
+import {
+  canReadIdentityUsers,
+  forbiddenResponse,
+  isTenantAdmin,
+} from '../auth/permissions.js';
 import { identityClient } from '../clients/identityClient.js';
+import { getAuthRequestContext as getCtx } from '../middleware/auth.js';
 
 const createUserSchema = z.object({
   email: z.string().email('Email inválido'),
@@ -17,13 +22,6 @@ const createApiKeySchema = z.object({
   expires_at: z.string().datetime().optional().nullable(),
 });
 
-import { getAuthRequestContext as getCtx } from '../middleware/auth.js';
-
-function isTenantAdmin(roles: string[] | undefined): boolean {
-  if (!roles || roles.length === 0) return false;
-  return roles.includes('tenant:admin') || roles.includes('platform:admin');
-}
-
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const identityRoutes = new Hono();
@@ -31,6 +29,12 @@ export const identityRoutes = new Hono();
 // GET /api/identity/users
 identityRoutes.get('/users', async (c) => {
   const ctx = getCtx(c);
+  if (!canReadIdentityUsers(ctx.roles)) {
+    return forbiddenResponse(
+      c,
+      'No tienes permisos para ver los usuarios de la organización.',
+    );
+  }
   const users = await identityClient.listUsers(ctx);
   return c.json({ success: true, data: users });
 });

@@ -75,8 +75,8 @@ html.dark {
   --color-info-soft: rgba(56, 189, 248, 0.14);
   --color-warning: #fbbf24;
   --color-warning-soft: rgba(251, 191, 36, 0.14);
-  --color-danger: #dc2626;
-  --color-danger-hover: #b91c1c;
+  --color-danger: #f87171;
+  --color-danger-hover: #ef4444;
   --color-danger-soft: rgba(248, 113, 113, 0.14);
 
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.35);

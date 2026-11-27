@@ -13,7 +13,7 @@ dashboardRoutes.get('/', async (c) => {
   const now = new Date();
   const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
-  const [clientsPage, catalogPage, upcomingBookings] = await Promise.all([
+  const [clientsRes, catalogRes, bookingsRes] = await Promise.allSettled([
     crmClient.searchClients(
       {
         filter: { and: [{ field: 'is_active', operator: 'eq', value: true }] },
@@ -40,24 +40,33 @@ dashboardRoutes.get('/', async (c) => {
     ),
   ]);
 
+  const clientsPage = clientsRes.status === 'fulfilled' ? clientsRes.value : null;
+  const catalogPage = catalogRes.status === 'fulfilled' ? catalogRes.value : null;
+  const upcomingBookings = bookingsRes.status === 'fulfilled' ? bookingsRes.value : [];
+
   const activeBookings = upcomingBookings.filter(
     (b) => b.status !== 'CANCELLED' && b.status !== 'NO_SHOW',
   );
   const upcomingRevenue = activeBookings.reduce((sum, b) => sum + b.total_price, 0);
-  const currency = activeBookings[0]?.currency ?? catalogPage.data[0]?.currency ?? 'CLP';
+  const currency = activeBookings[0]?.currency ?? catalogPage?.data[0]?.currency ?? 'CLP';
 
   return c.json({
     success: true,
     data: {
       kpis: {
-        totalClients: clientsPage.pagination.total_items,
-        activeCatalogItems: catalogPage.pagination.total_items,
+        totalClients: clientsPage?.pagination.total_items ?? 0,
+        activeCatalogItems: catalogPage?.pagination.total_items ?? 0,
         upcomingBookingsCount: activeBookings.length,
         upcomingRevenue,
         currency,
       },
-      recentClients: clientsPage.data,
-      recentCatalogItems: catalogPage.data,
+      modules: {
+        crm: clientsRes.status === 'fulfilled',
+        catalog: catalogRes.status === 'fulfilled',
+        bookings: bookingsRes.status === 'fulfilled',
+      },
+      recentClients: clientsPage?.data ?? [],
+      recentCatalogItems: catalogPage?.data ?? [],
       upcomingBookings: upcomingBookings.slice(0, 10),
     },
   });

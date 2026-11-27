@@ -1,8 +1,18 @@
 import { Check, Copy, HardDrive, ImagePlus, Trash2, Upload } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
-import { bffClient } from '../api/bffClient';
+import { BffApiError, bffClient } from '../api/bffClient';
+import { usePermissions } from '../auth/permissions';
 import type { AuthUser, MediaAsset, MediaContext, MediaQuotaUsage } from '../types/api';
-import { Button, EmptyState, Input, Select, StatusBadge, useModal, useToast } from '../ui';
+import {
+  Button,
+  EmptyState,
+  Input,
+  Select,
+  Skeleton,
+  StatusBadge,
+  useModal,
+  useToast,
+} from '../ui';
 
 const ALLOWED_MIME = ['image/webp', 'image/jpeg', 'image/png', 'image/avif'];
 
@@ -30,10 +40,9 @@ export function MediaView({ user }: MediaViewProps) {
   const { confirm } = useModal();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const isTenantAdmin = user.roles.some(
-    (r) => r === 'tenant:admin' || r === 'platform:admin',
-  );
-  const canDelete = isTenantAdmin || user.roles.includes('media:delete');
+  const { isAdmin: isTenantAdmin, can } = usePermissions(user);
+  const canWrite = can('media:write');
+  const canDelete = can('media:delete');
 
   const [contextFilter, setContextFilter] = useState<MediaContext | ''>('');
   const [uploadContext, setUploadContext] = useState<MediaContext>('general');
@@ -112,9 +121,11 @@ export function MediaView({ user }: MediaViewProps) {
       toast.success('Imagen agregada a la Biblioteca de Medios');
       await loadAll();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Error inesperado', {
-        title: 'No se pudo subir la imagen',
-      });
+      if (!(err instanceof BffApiError && err.notified)) {
+        toast.error(err instanceof Error ? err.message : 'Error inesperado', {
+          title: 'No se pudo subir la imagen',
+        });
+      }
     } finally {
       setUploading(false);
     }
@@ -171,7 +182,7 @@ export function MediaView({ user }: MediaViewProps) {
 
   return (
     <div className="stack-lg">
-      <div className="page-header row-between wrap gap-sm">
+      <div className="page-header">
         <div>
           <h1 className="page-title">Biblioteca de Medios</h1>
           <p className="page-subtitle">
@@ -179,41 +190,43 @@ export function MediaView({ user }: MediaViewProps) {
           </p>
         </div>
 
-        <div className="row-sm wrap">
-          <Select
-            value={uploadContext}
-            onChange={(e) => setUploadContext(e.target.value as MediaContext)}
-            aria-label="Contexto de subida"
-          >
-            {uploadContexts.map((ctx) => (
-              <option key={ctx} value={ctx}>
-                Subir a: {CONTEXT_LABELS[ctx]}
-              </option>
-            ))}
-          </Select>
+        {canWrite && (
+          <div className="page-actions media-upload-controls">
+            <Select
+              value={uploadContext}
+              onChange={(e) => setUploadContext(e.target.value as MediaContext)}
+              aria-label="Contexto de subida"
+            >
+              {uploadContexts.map((ctx) => (
+                <option key={ctx} value={ctx}>
+                  Subir a: {CONTEXT_LABELS[ctx]}
+                </option>
+              ))}
+            </Select>
 
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/webp,image/jpeg,image/png,image/avif"
-            style={{ display: 'none' }}
-            onChange={handleFileChange}
-          />
-          <Button
-            variant="primary"
-            icon={<Upload size={15} />}
-            isLoading={uploading}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            Subir imagen
-          </Button>
-        </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/webp,image/jpeg,image/png,image/avif"
+              className="visually-hidden"
+              onChange={handleFileChange}
+            />
+            <Button
+              variant="primary"
+              icon={<Upload size={15} />}
+              isLoading={uploading}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              Subir imagen
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Quota Card */}
       {quota && (
         <div className="card">
-          <div className="row-between wrap gap-sm" style={{ marginBottom: 8 }}>
+          <div className="row-between row-wrap quota-header">
             <div className="row-sm">
               <HardDrive size={16} />
               <strong className="text-sm">Cuota de almacenamiento del tenant</strong>
@@ -223,25 +236,12 @@ export function MediaView({ user }: MediaViewProps) {
               {formatBytes(quota.used_bytes)} / {formatBytes(quota.max_bytes)} ({quota.usage_percent}%)
             </span>
           </div>
-          <div
-            style={{
-              height: 8,
-              borderRadius: 999,
-              background: 'var(--color-bg-subtle)',
-              overflow: 'hidden',
-              border: '1px solid var(--color-border)',
-            }}
-          >
-            <div
-              style={{
-                width: `${Math.min(100, quota.usage_percent)}%`,
-                height: '100%',
-                background:
-                  quota.usage_percent > 85 ? 'var(--color-danger)' : 'var(--color-primary)',
-                transition: 'width 0.2s ease',
-              }}
-            />
-          </div>
+          <progress
+            className={`quota-progress ${quota.usage_percent > 85 ? 'is-danger' : ''}`}
+            value={Math.min(100, quota.usage_percent)}
+            max={100}
+            aria-label="Uso de cuota de almacenamiento"
+          />
         </div>
       )}
 
@@ -259,16 +259,35 @@ export function MediaView({ user }: MediaViewProps) {
         ))}
       </div>
 
-      {!loading && assets.length === 0 ? (
+      {loading ? (
+        <div className="media-grid">
+          {Array.from({ length: 6 }).map((_, idx) => (
+            <div key={idx} className="media-card">
+              <div className="media-card-preview">
+                <Skeleton variant="card" />
+              </div>
+              <div className="media-card-body stack-xs">
+                <Skeleton variant="line" />
+                <Skeleton variant="line-sm" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : assets.length === 0 ? (
         <EmptyState
           icon={<ImagePlus size={28} />}
           title="No hay archivos en esta vista"
-          description="Sube tu primera imagen para utilizarla en tus artículos, catálogo o branding."
+          description={
+            canWrite
+              ? 'Sube tu primera imagen para utilizarla en tus artículos, catálogo o branding.'
+              : 'Aún no hay archivos multimedia disponibles en esta categoría.'
+          }
         />
       ) : (
         <div className="media-grid">
           {assets.map((asset) => {
-            const canEditAsset = asset.context !== 'branding' || isTenantAdmin;
+            const canEditAsset = canWrite && (asset.context !== 'branding' || isTenantAdmin);
+            const isBusy = busyRowId === asset.id;
             return (
               <div key={asset.id} className="media-card">
                 <div className="media-card-preview">
@@ -300,7 +319,8 @@ export function MediaView({ user }: MediaViewProps) {
                       <Button
                         size="sm"
                         variant="primary"
-                        disabled={busyRowId === asset.id}
+                        disabled={isBusy}
+                        isLoading={isBusy}
                         onClick={() => handleSaveAlt(asset)}
                       >
                         OK
@@ -336,14 +356,16 @@ export function MediaView({ user }: MediaViewProps) {
                           size="sm"
                           variant="ghost"
                           icon={<Trash2 size={13} />}
-                          disabled={busyRowId === asset.id}
+                          disabled={isBusy}
+                          isLoading={isBusy}
                           onClick={() => handleDelete(asset, false)}
                           title="Ocultar (Soft Delete)"
+                          aria-label={`Ocultar ${asset.file_name}`}
                         />
                         <Button
                           size="sm"
                           variant="ghost"
-                          disabled={busyRowId === asset.id}
+                          disabled={isBusy}
                           onClick={() => handleDelete(asset, true)}
                           title="Purgar definitivamente de almacenamiento"
                         >

@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { bffClient } from '../api/bffClient';
+import { usePermissions } from '../auth/permissions';
 import { ArticleEditorDrawer } from '../components/content/ArticleEditorDrawer';
 import { TaxonomyTab } from '../components/content/TaxonomyTab';
 import { WebhooksTab } from '../components/content/WebhooksTab';
@@ -48,13 +49,12 @@ export interface ContentViewProps {
 }
 
 export function ContentView({ user }: ContentViewProps) {
+  const { can } = usePermissions(user);
+  const canWrite = can('content:write');
+  const canPublish = can('content:publish');
   const { openDrawer, closeDrawer } = useDrawer();
   const { confirm } = useModal();
   const { toast } = useToast();
-
-  const canPublish = user.roles.some(
-    (r) => r === 'content:publish' || r === 'tenant:admin' || r === 'platform:admin',
-  );
 
   const [tab, setTab] = useState<ContentTab>('articles');
   const [articles, setArticles] = useState<Article[]>([]);
@@ -153,7 +153,7 @@ export function ContentView({ user }: ContentViewProps) {
   };
 
   const handleStatusChange = async (article: Article, nextStatus: ArticleStatus) => {
-    if (!canPublish) return;
+    if (!canPublish || busyRowId) return;
     setBusyRowId(article.id);
     try {
       await bffClient.updateArticleStatus(article.id, { status: nextStatus });
@@ -166,13 +166,14 @@ export function ContentView({ user }: ContentViewProps) {
       );
       await loadArticles();
     } catch {
-      // handled
+      // handled globally
     } finally {
       setBusyRowId(null);
     }
   };
 
   const handlePreview = async (article: Article) => {
+    if (busyRowId) return;
     setBusyRowId(article.id);
     try {
       const res = await bffClient.generateArticlePreviewToken(article.id);
@@ -181,14 +182,14 @@ export function ContentView({ user }: ContentViewProps) {
         title: 'Vista previa generada (30 min)',
       });
     } catch {
-      // handled
+      // handled globally
     } finally {
       setBusyRowId(null);
     }
   };
 
   const handleDeleteArticle = async (article: Article) => {
-    if (!canPublish) return;
+    if (!canPublish || busyRowId) return;
     const ok = await confirm({
       title: 'Eliminar artículo',
       message: `¿Eliminar "${article.title}"? Esta acción realiza un borrado lógico y notificará a tus Deploy Hooks si estaba publicado.`,
@@ -202,7 +203,7 @@ export function ContentView({ user }: ContentViewProps) {
       toast.success('Artículo eliminado');
       await loadArticles();
     } catch {
-      // handled
+      // handled globally
     } finally {
       setBusyRowId(null);
     }
@@ -213,7 +214,7 @@ export function ContentView({ user }: ContentViewProps) {
       key: 'title',
       header: 'Artículo',
       render: (row) => (
-        <div className="stack-xs" style={{ minWidth: 0 }}>
+        <div className="stack-xs min-w-0">
           <strong className="truncate">{row.title}</strong>
           <span className="text-xs text-muted truncate">
             /{row.slug}
@@ -243,25 +244,30 @@ export function ContentView({ user }: ContentViewProps) {
       align: 'right',
       render: (row) => {
         const isBusy = busyRowId === row.id;
-        const canEditRow = row.status === 'DRAFT' || canPublish;
+        const canEditRow = (row.status === 'DRAFT' && canWrite) || canPublish;
         return (
-          <div className="row-xs row-end">
+          <div className="row-xs row-end row-wrap">
             <Button
               size="sm"
               variant="ghost"
-              icon={<Pencil size={14} />}
+              icon={canEditRow ? <Pencil size={14} /> : <Eye size={14} />}
               disabled={isBusy}
               onClick={() => openArticleEditor(row)}
-              title={canEditRow ? 'Editar' : 'Ver artículo'}
+              title={canEditRow ? 'Editar artículo' : 'Ver artículo (solo lectura)'}
+              aria-label={canEditRow ? `Editar ${row.title}` : `Ver ${row.title}`}
             />
-            <Button
-              size="sm"
-              variant="ghost"
-              icon={<Eye size={14} />}
-              disabled={isBusy}
-              onClick={() => handlePreview(row)}
-              title="Generar token de vista previa"
-            />
+            {canWrite && (
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<Eye size={14} />}
+                disabled={isBusy}
+                isLoading={isBusy}
+                onClick={() => handlePreview(row)}
+                title="Generar token de vista previa"
+                aria-label={`Vista previa de ${row.title}`}
+              />
+            )}
             {canPublish && row.status !== 'PUBLISHED' && (
               <Button
                 size="sm"
@@ -270,6 +276,7 @@ export function ContentView({ user }: ContentViewProps) {
                 disabled={isBusy}
                 onClick={() => handleStatusChange(row, 'PUBLISHED')}
                 title="Publicar"
+                aria-label={`Publicar ${row.title}`}
               />
             )}
             {canPublish && row.status === 'PUBLISHED' && (
@@ -280,6 +287,7 @@ export function ContentView({ user }: ContentViewProps) {
                 disabled={isBusy}
                 onClick={() => handleStatusChange(row, 'ARCHIVED')}
                 title="Archivar"
+                aria-label={`Archivar ${row.title}`}
               />
             )}
             {canPublish && (
@@ -290,6 +298,7 @@ export function ContentView({ user }: ContentViewProps) {
                 disabled={isBusy}
                 onClick={() => handleDeleteArticle(row)}
                 title="Eliminar"
+                aria-label={`Eliminar ${row.title}`}
               />
             )}
           </div>
@@ -300,21 +309,23 @@ export function ContentView({ user }: ContentViewProps) {
 
   return (
     <div className="stack-lg">
-      <div className="page-header row-between wrap gap-sm">
+      <div className="page-header">
         <div>
           <h1 className="page-title">Contenido / Blog</h1>
           <p className="page-subtitle">
             Headless CMS multi-tenant con editor visual, vista previa SSR y Deploy Hooks SSG.
           </p>
         </div>
-        {tab === 'articles' && (
-          <Button
-            variant="primary"
-            icon={<FilePlus2 size={16} />}
-            onClick={() => openArticleEditor(null)}
-          >
-            Nuevo artículo
-          </Button>
+        {tab === 'articles' && canWrite && (
+          <div className="page-actions">
+            <Button
+              variant="primary"
+              icon={<FilePlus2 size={16} />}
+              onClick={() => openArticleEditor(null)}
+            >
+              Nuevo artículo
+            </Button>
+          </div>
         )}
       </div>
 
@@ -396,6 +407,7 @@ export function ContentView({ user }: ContentViewProps) {
         <TaxonomyTab
           categories={categories}
           tags={tags}
+          canWrite={canWrite}
           onRefresh={() => void loadTaxonomy()}
         />
       )}

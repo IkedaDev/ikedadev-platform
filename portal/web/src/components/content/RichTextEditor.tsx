@@ -15,7 +15,7 @@ import {
   ListOrdered,
   Quote,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button, Input } from '../../ui';
 import { isSafeMediaUrl, useMediaPicker } from '../shared/MediaPickerModal';
 
@@ -71,6 +71,12 @@ export function RichTextEditor({
     },
   });
 
+  useEffect(() => {
+    if (editor) {
+      editor.setEditable(!disabled);
+    }
+  }, [editor, disabled]);
+
   if (!editor) {
     return null;
   }
@@ -104,7 +110,7 @@ export function RichTextEditor({
   };
 
   return (
-    <div className="tiptap-shell">
+    <div className={`tiptap-shell ${disabled ? 'is-disabled' : ''}`}>
       {!disabled && (
         <div className="tiptap-toolbar" role="toolbar" aria-label="Formato de texto">
           <button

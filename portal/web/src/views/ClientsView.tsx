@@ -1,7 +1,8 @@
 import { Activity, Eye, Pencil, Plus, Trash2, Users } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { BffApiError, bffClient } from '../api/bffClient';
-import type { Client, Criteria, PaginationMeta, TelemetryEvent } from '../types/api';
+import { usePermissions } from '../auth/permissions';
+import type { AuthUser, Client, Criteria, PaginationMeta, TelemetryEvent } from '../types/api';
 import {
   Button,
   DataTable,
@@ -298,7 +299,7 @@ function ClientDrawerForm({ initialClient, onDirtyChange, onSaved, onCancel }: C
 
 interface Client360DrawerProps {
   client: Client;
-  onEdit: () => void;
+  onEdit?: () => void;
 }
 
 function Client360Drawer({ client, onEdit }: Client360DrawerProps) {
@@ -337,9 +338,11 @@ function Client360Drawer({ client, onEdit }: Client360DrawerProps) {
               tone={client.is_active ? 'green' : 'gray'}
             />
           </div>
-          <Button variant="secondary" size="sm" icon={<Pencil size={13} />} onClick={onEdit}>
-            Editar ficha
-          </Button>
+          {onEdit && (
+            <Button variant="secondary" size="sm" icon={<Pencil size={13} />} onClick={onEdit}>
+              Editar ficha
+            </Button>
+          )}
         </div>
 
         <div className="detail-list">
@@ -424,7 +427,13 @@ function Client360Drawer({ client, onEdit }: Client360DrawerProps) {
   );
 }
 
-export function ClientsView() {
+export interface ClientsViewProps {
+  user: AuthUser;
+}
+
+export function ClientsView({ user }: ClientsViewProps) {
+  const { can } = usePermissions(user);
+  const canWrite = can('crm:write');
   const { openDrawer, closeDrawer } = useDrawer();
   const { confirm } = useModal();
   const { toast } = useToast();
@@ -510,11 +519,14 @@ export function ClientsView() {
         subtitle: client.full_name,
         size: 'md',
         content: (
-          <Client360Drawer client={client} onEdit={() => openClientDrawer(client)} />
+          <Client360Drawer
+            client={client}
+            onEdit={canWrite ? () => openClientDrawer(client) : undefined}
+          />
         ),
       });
     },
-    [openDrawer, openClientDrawer],
+    [openDrawer, openClientDrawer, canWrite],
   );
 
   const handleDelete = useCallback(
@@ -619,29 +631,33 @@ export function ClientsView() {
               aria-label={`Ver ficha de ${c.full_name}`}
               title="Ver ficha"
             />
-            <Button
-              variant="secondary"
-              size="sm"
-              icon={<Pencil size={13} />}
-              onClick={() => openClientDrawer(c)}
-              aria-label={`Editar ${c.full_name}`}
-              title="Editar"
-            />
-            <Button
-              variant="danger"
-              size="sm"
-              icon={<Trash2 size={13} />}
-              onClick={() => handleDelete(c)}
-              disabled={busyClientId === c.id}
-              isLoading={busyClientId === c.id}
-              aria-label={`Eliminar ${c.full_name}`}
-              title="Eliminar"
-            />
+            {canWrite && (
+              <>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={<Pencil size={13} />}
+                  onClick={() => openClientDrawer(c)}
+                  aria-label={`Editar ${c.full_name}`}
+                  title="Editar"
+                />
+                <Button
+                  variant="danger"
+                  size="sm"
+                  icon={<Trash2 size={13} />}
+                  onClick={() => handleDelete(c)}
+                  disabled={busyClientId === c.id}
+                  isLoading={busyClientId === c.id}
+                  aria-label={`Eliminar ${c.full_name}`}
+                  title="Eliminar"
+                />
+              </>
+            )}
           </div>
         ),
       },
     ],
-    [busyClientId, openClientProfile, openClientDrawer, handleDelete],
+    [busyClientId, canWrite, openClientProfile, openClientDrawer, handleDelete],
   );
 
   return (
@@ -653,15 +669,17 @@ export function ClientsView() {
             Administra tu cartera de clientes, datos de contacto e historial de actividad.
           </p>
         </div>
-        <div className="page-actions">
-          <Button
-            variant="primary"
-            icon={<Plus size={15} />}
-            onClick={() => openClientDrawer(null)}
-          >
-            Nuevo cliente
-          </Button>
-        </div>
+        {canWrite && (
+          <div className="page-actions">
+            <Button
+              variant="primary"
+              icon={<Plus size={15} />}
+              onClick={() => openClientDrawer(null)}
+            >
+              Nuevo cliente
+            </Button>
+          </div>
+        )}
       </div>
 
       {error && (
@@ -686,17 +704,23 @@ export function ClientsView() {
         total={pagination?.total_items}
         onPageChange={setPage}
         emptyTitle="No se encontraron clientes"
-        emptyDescription="Prueba con otro término de búsqueda o agrega tu primer cliente."
+        emptyDescription={
+          canWrite
+            ? 'Prueba con otro término de búsqueda o agrega tu primer cliente.'
+            : 'No hay clientes registrados que coincidan con tu búsqueda.'
+        }
         emptyIcon={<Users size={22} />}
         emptyAction={
-          <Button
-            variant="primary"
-            size="sm"
-            icon={<Plus size={14} />}
-            onClick={() => openClientDrawer(null)}
-          >
-            Nuevo cliente
-          </Button>
+          canWrite ? (
+            <Button
+              variant="primary"
+              size="sm"
+              icon={<Plus size={14} />}
+              onClick={() => openClientDrawer(null)}
+            >
+              Nuevo cliente
+            </Button>
+          ) : undefined
         }
       />
     </div>

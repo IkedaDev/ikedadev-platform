@@ -3,6 +3,8 @@ import {
   ArrowRight,
   CalendarClock,
   DollarSign,
+  FileText,
+  Image as ImageIcon,
   Package,
   RefreshCw,
   Settings,
@@ -10,9 +12,10 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { BffApiError, bffClient } from '../api/bffClient';
+import { usePermissions } from '../auth/permissions';
 import type { NavSection } from '../components/Sidebar';
 import { useTheme } from '../context/ThemeProvider';
-import type { BookingStatus, DashboardSummary, EnrichedBooking } from '../types/api';
+import type { AuthUser, BookingStatus, DashboardSummary, EnrichedBooking } from '../types/api';
 import {
   Button,
   DataTable,
@@ -26,6 +29,7 @@ import {
 } from '../ui';
 
 interface DashboardViewProps {
+  user: AuthUser;
   onNavigate?: (section: NavSection) => void;
 }
 
@@ -53,8 +57,9 @@ function bookingStatusTone(status: BookingStatus): StatusTone {
   }
 }
 
-export function DashboardView({ onNavigate }: DashboardViewProps) {
+export function DashboardView({ user, onNavigate }: DashboardViewProps) {
   const { settings } = useTheme();
+  const { canAccessSection } = usePermissions(user);
   const { toast } = useToast();
   const [data, setData] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -167,13 +172,21 @@ export function DashboardView({ onNavigate }: DashboardViewProps) {
     [],
   );
 
+  const showCrm =
+    canAccessSection('clients', settings.features) && data?.modules?.crm !== false;
+  const showCatalog =
+    canAccessSection('catalog', settings.features) && data?.modules?.catalog !== false;
+  const showBookings =
+    canAccessSection('bookings', settings.features) && data?.modules?.bookings !== false;
+  const hasAnyKpi = showCrm || showCatalog || showBookings;
+
   return (
     <div className="stack-lg">
       <div className="page-header">
         <div>
           <h1 className="page-title">Resumen general</h1>
           <p className="page-subtitle">
-            Panorama actualizado de tus clientes, catálogo y próximas reservas.
+            Panorama actualizado de la operación diaria de tu negocio.
           </p>
         </div>
         <div className="page-actions">
@@ -194,36 +207,46 @@ export function DashboardView({ onNavigate }: DashboardViewProps) {
         </div>
       )}
 
-      <div className="kpi-grid">
-        <StatCard
-          label="Clientes registrados"
-          value={data?.kpis.totalClients ?? 0}
-          icon={<Users size={18} />}
-          helper="Activos en tu cartera"
-          isLoading={loading}
-        />
-        <StatCard
-          label="Catálogo activo"
-          value={data?.kpis.activeCatalogItems ?? 0}
-          icon={<Package size={18} />}
-          helper="Servicios, productos y paquetes"
-          isLoading={loading}
-        />
-        <StatCard
-          label="Próximas reservas"
-          value={data?.kpis.upcomingBookingsCount ?? 0}
-          icon={<CalendarClock size={18} />}
-          helper="En los próximos 30 días"
-          isLoading={loading}
-        />
-        <StatCard
-          label="Ingresos agendados"
-          value={formatMoney(data?.kpis.upcomingRevenue ?? 0, defaultCurrency)}
-          icon={<DollarSign size={18} />}
-          helper="Estimado de reservas activas"
-          isLoading={loading}
-        />
-      </div>
+      {hasAnyKpi && (
+        <div className="kpi-grid">
+          {showCrm && (
+            <StatCard
+              label="Clientes registrados"
+              value={data?.kpis.totalClients ?? 0}
+              icon={<Users size={18} />}
+              helper="Activos en tu cartera"
+              isLoading={loading}
+            />
+          )}
+          {showCatalog && (
+            <StatCard
+              label="Catálogo activo"
+              value={data?.kpis.activeCatalogItems ?? 0}
+              icon={<Package size={18} />}
+              helper="Servicios, productos y paquetes"
+              isLoading={loading}
+            />
+          )}
+          {showBookings && (
+            <>
+              <StatCard
+                label="Próximas reservas"
+                value={data?.kpis.upcomingBookingsCount ?? 0}
+                icon={<CalendarClock size={18} />}
+                helper="En los próximos 30 días"
+                isLoading={loading}
+              />
+              <StatCard
+                label="Ingresos agendados"
+                value={formatMoney(data?.kpis.upcomingRevenue ?? 0, defaultCurrency)}
+                icon={<DollarSign size={18} />}
+                helper="Estimado de reservas activas"
+                isLoading={loading}
+              />
+            </>
+          )}
+        </div>
+      )}
 
       {onNavigate && (
         <div className="card card-compact">
@@ -233,7 +256,7 @@ export function DashboardView({ onNavigate }: DashboardViewProps) {
               <p className="card-subtitle">Accede directamente a las herramientas de tu negocio.</p>
             </div>
             <div className="row-wrap">
-              {settings.features.bookings !== false && (
+              {canAccessSection('bookings', settings.features) && (
                 <Button
                   variant="primary"
                   size="sm"
@@ -243,7 +266,7 @@ export function DashboardView({ onNavigate }: DashboardViewProps) {
                   Agenda y Reservas
                 </Button>
               )}
-              {settings.features.crm !== false && (
+              {canAccessSection('clients', settings.features) && (
                 <Button
                   variant="secondary"
                   size="sm"
@@ -253,7 +276,7 @@ export function DashboardView({ onNavigate }: DashboardViewProps) {
                   Clientes
                 </Button>
               )}
-              {settings.features.catalog !== false && (
+              {canAccessSection('catalog', settings.features) && (
                 <Button
                   variant="secondary"
                   size="sm"
@@ -263,7 +286,27 @@ export function DashboardView({ onNavigate }: DashboardViewProps) {
                   Catálogo
                 </Button>
               )}
-              {settings.features.telemetry !== false && (
+              {canAccessSection('content', settings.features) && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={<FileText size={14} />}
+                  onClick={() => onNavigate('content')}
+                >
+                  Contenido / Blog
+                </Button>
+              )}
+              {canAccessSection('media', settings.features) && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={<ImageIcon size={14} />}
+                  onClick={() => onNavigate('media')}
+                >
+                  Medios
+                </Button>
+              )}
+              {canAccessSection('telemetry', settings.features) && (
                 <Button
                   variant="secondary"
                   size="sm"
@@ -273,48 +316,52 @@ export function DashboardView({ onNavigate }: DashboardViewProps) {
                   Actividad
                 </Button>
               )}
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<Settings size={14} />}
-                onClick={() => onNavigate('settings')}
-              >
-                Ajustes
-              </Button>
+              {canAccessSection('settings', settings.features) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<Settings size={14} />}
+                  onClick={() => onNavigate('settings')}
+                >
+                  Ajustes
+                </Button>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      <div className="stack-sm">
-        <div className="row-between row-wrap">
-          <h2 className="card-title">Próximas reservas</h2>
-          <StatusBadge label="Próximos 30 días" tone="blue" />
-        </div>
+      {showBookings && (
+        <div className="stack-sm">
+          <div className="row-between row-wrap">
+            <h2 className="card-title">Próximas reservas</h2>
+            <StatusBadge label="Próximos 30 días" tone="blue" />
+          </div>
 
-        <DataTable<EnrichedBooking>
-          columns={columns}
-          data={data?.upcomingBookings ?? []}
-          rowKey={(row) => row.id}
-          isLoading={loading}
-          skeletonRows={4}
-          emptyTitle="Sin reservas próximas"
-          emptyDescription="Aún no hay citas agendadas para los próximos 30 días."
-          emptyIcon={<CalendarClock size={22} />}
-          emptyAction={
-            onNavigate && settings.features.bookings !== false ? (
-              <Button
-                variant="primary"
-                size="sm"
-                icon={<ArrowRight size={14} />}
-                onClick={() => onNavigate('bookings')}
-              >
-                Ir a Agenda y Reservas
-              </Button>
-            ) : undefined
-          }
-        />
-      </div>
+          <DataTable<EnrichedBooking>
+            columns={columns}
+            data={data?.upcomingBookings ?? []}
+            rowKey={(row) => row.id}
+            isLoading={loading}
+            skeletonRows={4}
+            emptyTitle="Sin reservas próximas"
+            emptyDescription="Aún no hay citas agendadas para los próximos 30 días."
+            emptyIcon={<CalendarClock size={22} />}
+            emptyAction={
+              onNavigate && canAccessSection('bookings', settings.features) ? (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={<ArrowRight size={14} />}
+                  onClick={() => onNavigate('bookings')}
+                >
+                  Ir a Agenda y Reservas
+                </Button>
+              ) : undefined
+            }
+          />
+        </div>
+      )}
     </div>
   );
 }

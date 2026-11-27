@@ -15,6 +15,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { BffApiError } from '../api/bffClient';
 import { KROPY_DEFAULT_BRANDING, useTheme } from '../context/ThemeProvider';
 import type {
+  AuthUser,
   TenantBranding,
   TenantFeatures,
   TenantLocale,
@@ -25,6 +26,7 @@ import { useMediaPicker } from '../components/shared/MediaPickerModal';
 import { sanitizeLogoUrl } from '../utils/url';
 
 interface SettingsViewProps {
+  user: AuthUser;
   onDirtyChange?: (dirty: boolean) => void;
 }
 
@@ -101,7 +103,7 @@ const FEATURE_MODULES: Array<{
 
 const HEX_REGEX = /^#[0-9a-fA-F]{6}$/;
 
-export function SettingsView({ onDirtyChange }: SettingsViewProps) {
+export function SettingsView({ user, onDirtyChange }: SettingsViewProps) {
   const {
     settings,
     tenantMeta,
@@ -343,7 +345,7 @@ export function SettingsView({ onDirtyChange }: SettingsViewProps) {
                 </Select>
               </div>
 
-              <div className="row-sm">
+              <div className="input-action-row">
                 <Input
                   label="URL del logotipo"
                   type="url"
@@ -361,13 +363,17 @@ export function SettingsView({ onDirtyChange }: SettingsViewProps) {
                 {canEditSettings && (
                   <Button
                     type="button"
-                    size="sm"
+                    size="md"
                     variant="secondary"
-                    icon={<ImageIcon size={14} />}
+                    className="input-action-btn"
+                    icon={<ImageIcon size={15} />}
                     onClick={() =>
                       openMediaPicker({
                         context: 'branding',
                         title: 'Seleccionar logotipo del negocio',
+                        allowUpload: user.roles.some(
+                          (r) => r === 'tenant:admin' || r === 'platform:admin',
+                        ),
                         onSelect: (url) => updateBrandingField('logoUrl', url),
                       })
                     }
@@ -558,7 +564,7 @@ export function SettingsView({ onDirtyChange }: SettingsViewProps) {
                 return (
                   <label
                     key={mod.key}
-                    className={`module-toggle-card ${enabled ? 'is-enabled' : ''}`}
+                    className={`module-toggle-card ${enabled ? 'is-enabled' : ''} ${!canEditSettings ? 'is-disabled' : ''}`}
                   >
                     <div className="stack-xs">
                       <span className="font-semibold text-sm">{mod.label}</span>
@@ -566,6 +572,7 @@ export function SettingsView({ onDirtyChange }: SettingsViewProps) {
                     </div>
                     <input
                       type="checkbox"
+                      className="module-toggle-checkbox"
                       checked={enabled}
                       onChange={() => handleToggleFeature(mod.key)}
                       disabled={!canEditSettings}

@@ -1,5 +1,10 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
+import {
+  canWriteBookings,
+  canWriteEvents,
+  forbiddenResponse,
+} from '../auth/permissions.js';
 import { bookingsClient } from '../clients/bookingsClient.js';
 import { catalogClient } from '../clients/catalogClient.js';
 import { crmClient } from '../clients/crmClient.js';
@@ -236,6 +241,9 @@ bookingsRoutes.get('/', async (c) => {
 //   4. Compensate: if bookings-api fails after event creation, delete the orphan event in events-api
 bookingsRoutes.post('/', async (c) => {
   const ctx = getRequestContext(c);
+  if (!canWriteBookings(ctx.roles) || !canWriteEvents(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para crear reservas.');
+  }
   const rawBody = await c.req.json().catch(() => null);
   const parsed = createBookingSchema.safeParse(rawBody);
 
@@ -426,6 +434,9 @@ bookingsRoutes.post('/', async (c) => {
 // deletes the associated event in events-api to automatically free the time slot.
 bookingsRoutes.patch('/:id/status', async (c) => {
   const ctx = getRequestContext(c);
+  if (!canWriteBookings(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para cambiar el estado de reservas.');
+  }
   const id = c.req.param('id');
   if (!isValidUuid(id)) {
     return c.json(
@@ -501,6 +512,9 @@ bookingsRoutes.patch('/:id/status', async (c) => {
 // DELETE /api/bookings/:id
 bookingsRoutes.delete('/:id', async (c) => {
   const ctx = getRequestContext(c);
+  if (!canWriteBookings(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para eliminar reservas.');
+  }
   const id = c.req.param('id');
   if (!isValidUuid(id)) {
     return c.json(

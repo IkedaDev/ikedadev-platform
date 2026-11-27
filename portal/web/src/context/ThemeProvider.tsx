@@ -237,7 +237,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         slug: res.slug,
         name: res.name,
       });
-      setCanEditSettings(res.canEdit ?? true);
+      setCanEditSettings(Boolean(res.canEdit));
     } catch {
       // Not authenticated or settings unavailable: try public branding by ?tenant= / subdomain
       setTenantMeta(null);
@@ -259,10 +259,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       setIsLoading(false);
     }
   }, []);
-
-  useEffect(() => {
-    void reloadSettings({ allowUnauthenticated: true });
-  }, [reloadSettings]);
 
   const effectiveBranding = useMemo<TenantBranding>(
     () => ({
@@ -350,7 +346,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         slug: res.slug,
         name: res.name,
       });
-      setCanEditSettings(res.canEdit ?? true);
+      setCanEditSettings(Boolean(res.canEdit));
       return merged;
     },
     [],

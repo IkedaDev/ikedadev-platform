@@ -79,7 +79,7 @@ function WebhookForm({
         <span className="field-label">Eventos que disparan el rebuild</span>
         <div className="stack-xs">
           {ALL_EVENTS.map((ev) => (
-            <label key={ev} className="row-sm text-sm">
+            <label key={ev} className="checkbox-row">
               <input
                 type="checkbox"
                 checked={events.includes(ev)}
@@ -160,7 +160,7 @@ export function WebhooksTab({ webhooks, loading, onRefresh }: WebhooksTabProps) 
 
   return (
     <div className="stack-md">
-      <div className="row-between wrap gap-sm">
+      <div className="row-between row-wrap gap-sm">
         <div>
           <h3 className="card-title">Deploy Hooks (SSG)</h3>
           <p className="card-subtitle">
@@ -182,9 +182,9 @@ export function WebhooksTab({ webhooks, loading, onRefresh }: WebhooksTabProps) 
         <div className="stack-sm">
           {webhooks.map((hook) => (
             <div key={hook.id} className="card">
-              <div className="row-between wrap gap-sm">
-                <div className="stack-xs" style={{ minWidth: 0 }}>
-                  <div className="row-xs wrap">
+              <div className="row-between row-wrap gap-sm">
+                <div className="stack-xs min-w-0">
+                  <div className="row-xs row-wrap">
                     <strong>{hook.name}</strong>
                     <StatusBadge
                       label={hook.is_active ? 'Activo' : 'Inactivo'}

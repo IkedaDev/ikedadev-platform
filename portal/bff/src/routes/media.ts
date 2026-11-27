@@ -1,5 +1,12 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
+import {
+  canDeleteMedia,
+  canReadMedia,
+  canWriteMedia,
+  canWriteMediaContext,
+  forbiddenResponse,
+} from '../auth/permissions.js';
 import { mediaClient } from '../clients/mediaClient.js';
 import { telemetryClient } from '../clients/telemetryClient.js';
 import { getAuthRequestContext as getCtx } from '../middleware/auth.js';
@@ -37,6 +44,9 @@ export const mediaRoutes = new Hono();
 
 mediaRoutes.get('/', async (c) => {
   const ctx = getCtx(c);
+  if (!canReadMedia(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para ver la biblioteca de medios.');
+  }
   const rawContext = c.req.query('context')?.trim();
   let context: MediaContext | undefined;
   if (rawContext) {
@@ -61,6 +71,7 @@ mediaRoutes.get('/quota', async (c) => {
 });
 
 mediaRoutes.post('/presign', async (c) => {
+  const ctx = getCtx(c);
   const raw = await c.req.json().catch(() => null);
   const parsed = presignSchema.safeParse(raw);
   if (!parsed.success) {
@@ -74,12 +85,23 @@ mediaRoutes.post('/presign', async (c) => {
       422,
     );
   }
-  const ctx = getCtx(c);
+  if (!canWriteMediaContext(ctx.roles, parsed.data.context)) {
+    return forbiddenResponse(
+      c,
+      parsed.data.context === 'branding'
+        ? 'Solo un administrador puede subir archivos de identidad de marca.'
+        : 'No tienes permisos para subir archivos multimedia.',
+    );
+  }
   const data = await mediaClient.presign(parsed.data, ctx);
   return c.json({ success: true, data });
 });
 
 mediaRoutes.post('/confirm', async (c) => {
+  const ctx = getCtx(c);
+  if (!canWriteMedia(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para confirmar archivos multimedia.');
+  }
   const raw = await c.req.json().catch(() => null);
   const parsed = confirmSchema.safeParse(raw);
   if (!parsed.success) {
@@ -93,7 +115,6 @@ mediaRoutes.post('/confirm', async (c) => {
       422,
     );
   }
-  const ctx = getCtx(c);
   const asset = await mediaClient.confirm(parsed.data, ctx);
 
   telemetryClient.emitAuditEventAsync(
@@ -128,6 +149,10 @@ mediaRoutes.get('/:id', async (c) => {
 });
 
 mediaRoutes.patch('/:id', async (c) => {
+  const ctx = getCtx(c);
+  if (!canWriteMedia(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para editar archivos multimedia.');
+  }
   const id = c.req.param('id');
   if (!isValidUuid(id)) {
     return c.json(
@@ -148,12 +173,21 @@ mediaRoutes.patch('/:id', async (c) => {
       422,
     );
   }
-  const ctx = getCtx(c);
+  if (parsed.data.context && !canWriteMediaContext(ctx.roles, parsed.data.context)) {
+    return forbiddenResponse(
+      c,
+      'Solo un administrador puede asignar archivos al contexto de marca.',
+    );
+  }
   const data = await mediaClient.update(id, parsed.data, ctx);
   return c.json({ success: true, data });
 });
 
 mediaRoutes.delete('/:id', async (c) => {
+  const ctx = getCtx(c);
+  if (!canDeleteMedia(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para eliminar archivos multimedia.');
+  }
   const id = c.req.param('id');
   if (!isValidUuid(id)) {
     return c.json(
@@ -162,7 +196,6 @@ mediaRoutes.delete('/:id', async (c) => {
     );
   }
   const permanent = c.req.query('permanent') === 'true';
-  const ctx = getCtx(c);
   await mediaClient.delete(id, permanent, ctx);
 
   if (permanent) {
@@ -181,6 +214,10 @@ mediaRoutes.delete('/:id', async (c) => {
 });
 
 mediaRoutes.post('/:id/restore', async (c) => {
+  const ctx = getCtx(c);
+  if (!canDeleteMedia(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para restaurar archivos multimedia.');
+  }
   const id = c.req.param('id');
   if (!isValidUuid(id)) {
     return c.json(
@@ -188,7 +225,6 @@ mediaRoutes.post('/:id/restore', async (c) => {
       422,
     );
   }
-  const ctx = getCtx(c);
   const data = await mediaClient.restore(id, ctx);
   return c.json({ success: true, data });
 });

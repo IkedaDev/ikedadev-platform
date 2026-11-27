@@ -1,7 +1,8 @@
 import { Check, Copy, KeyRound, ShieldCheck, Trash2, UserPlus, Users } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { BffApiError, bffClient } from '../api/bffClient';
-import type { ApiKeySummary, CreatedApiKey, TenantUser } from '../types/api';
+import { usePermissions } from '../auth/permissions';
+import type { ApiKeySummary, AuthUser, CreatedApiKey, TenantUser } from '../types/api';
 import {
   Button,
   DataTable,
@@ -315,7 +316,13 @@ function ApiKeyRevealContent({ createdKey }: { createdKey: CreatedApiKey }) {
   );
 }
 
-export function IdentityView() {
+export interface IdentityViewProps {
+  user: AuthUser;
+}
+
+export function IdentityView({ user }: IdentityViewProps) {
+  const { can } = usePermissions(user);
+  const canWrite = can('identity:write');
   const { openDrawer, closeDrawer } = useDrawer();
   const { openModal, closeModal, confirm } = useModal();
   const { toast } = useToast();
@@ -333,7 +340,10 @@ export function IdentityView() {
     setLoading(true);
     setError(null);
     try {
-      const [u, k] = await Promise.all([bffClient.listUsers(), bffClient.listApiKeys()]);
+      const [u, k] = await Promise.all([
+        bffClient.listUsers(),
+        canWrite ? bffClient.listApiKeys() : Promise.resolve<ApiKeySummary[]>([]),
+      ]);
       setUsers(u);
       setApiKeys(k);
     } catch (err) {
@@ -345,7 +355,7 @@ export function IdentityView() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [canWrite]);
 
   useEffect(() => {
     void loadData();

@@ -12,8 +12,10 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { BffApiError, bffClient } from '../api/bffClient';
+import { usePermissions } from '../auth/permissions';
 import { useTheme } from '../context/ThemeProvider';
 import type {
+  AuthUser,
   AvailabilityResult,
   BookingStatus,
   Calendar,
@@ -428,8 +430,17 @@ function CalendarDrawerForm({
   );
 }
 
-export function BookingsView() {
+export interface BookingsViewProps {
+  user: AuthUser;
+}
+
+export function BookingsView({ user }: BookingsViewProps) {
   const { settings } = useTheme();
+  const { can } = usePermissions(user);
+  const canWriteBookings = can('bookings:write');
+  const canWriteEvents = can('events:write');
+  const canCreateCalendar = settings.features.events !== false && canWriteEvents;
+  const canCreateBooking = canWriteBookings && canWriteEvents;
   const { openDrawer, closeDrawer } = useDrawer();
   const { confirm } = useModal();
   const { toast } = useToast();
@@ -772,64 +783,68 @@ export function BookingsView() {
           </span>
         ),
       },
-      {
-        key: 'actions',
-        header: 'Acciones',
-        align: 'right',
-        render: (b) => {
-          const isBusy = busyBookingId === b.id;
-          return (
-            <div className="row-end row-wrap">
-              {!isTerminalStatus(b.status) && (
-                <>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    icon={<Check size={13} />}
-                    onClick={() => handleTransitionStatus(b, 'COMPLETED')}
-                    disabled={isBusy}
-                    title="Marcar como completada"
-                  >
-                    Completar
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    icon={<UserX size={13} />}
-                    onClick={() => handleTransitionStatus(b, 'NO_SHOW')}
-                    disabled={isBusy}
-                    title="Marcar que no asistió"
-                  >
-                    No asistió
-                  </Button>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    icon={<XCircle size={13} />}
-                    onClick={() => handleTransitionStatus(b, 'CANCELLED')}
-                    disabled={isBusy}
-                    title="Cancelar reserva"
-                  >
-                    Cancelar
-                  </Button>
-                </>
-              )}
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<Trash2 size={13} />}
-                onClick={() => handleDeleteBooking(b)}
-                disabled={isBusy}
-                isLoading={isBusy}
-                aria-label={`Eliminar reserva ${b.booking_code}`}
-                title="Eliminar reserva"
-              />
-            </div>
-          );
-        },
-      },
+      ...(canWriteBookings
+        ? [
+            {
+              key: 'actions',
+              header: 'Acciones',
+              align: 'right' as const,
+              render: (b: EnrichedBooking) => {
+                const isBusy = busyBookingId === b.id;
+                return (
+                  <div className="row-end row-wrap">
+                    {!isTerminalStatus(b.status) && (
+                      <>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          icon={<Check size={13} />}
+                          onClick={() => handleTransitionStatus(b, 'COMPLETED')}
+                          disabled={isBusy}
+                          title="Marcar como completada"
+                        >
+                          Completar
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          icon={<UserX size={13} />}
+                          onClick={() => handleTransitionStatus(b, 'NO_SHOW')}
+                          disabled={isBusy}
+                          title="Marcar que no asistió"
+                        >
+                          No asistió
+                        </Button>
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          icon={<XCircle size={13} />}
+                          onClick={() => handleTransitionStatus(b, 'CANCELLED')}
+                          disabled={isBusy}
+                          title="Cancelar reserva"
+                        >
+                          Cancelar
+                        </Button>
+                      </>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={<Trash2 size={13} />}
+                      onClick={() => handleDeleteBooking(b)}
+                      disabled={isBusy}
+                      isLoading={isBusy}
+                      aria-label={`Eliminar reserva ${b.booking_code}`}
+                      title="Eliminar reserva"
+                    />
+                  </div>
+                );
+              },
+            },
+          ]
+        : []),
     ],
-    [busyBookingId, handleTransitionStatus, handleDeleteBooking],
+    [busyBookingId, canWriteBookings, handleTransitionStatus, handleDeleteBooking],
   );
 
   return (
@@ -842,13 +857,15 @@ export function BookingsView() {
           </p>
         </div>
         <div className="page-actions">
-          <Button
-            variant="secondary"
-            icon={<CalendarPlus size={15} />}
-            onClick={openCalendarDrawer}
-          >
-            Nuevo calendario
-          </Button>
+          {canCreateCalendar && (
+            <Button
+              variant="secondary"
+              icon={<CalendarPlus size={15} />}
+              onClick={openCalendarDrawer}
+            >
+              Nuevo calendario
+            </Button>
+          )}
           <Button
             variant="secondary"
             icon={<RefreshCw size={15} className={loading ? 'btn-spinner' : ''} />}
@@ -857,13 +874,15 @@ export function BookingsView() {
           >
             Actualizar
           </Button>
-          <Button
-            variant="primary"
-            icon={<Plus size={15} />}
-            onClick={() => openBookingDrawer()}
-          >
-            Nueva reserva
-          </Button>
+          {canCreateBooking && (
+            <Button
+              variant="primary"
+              icon={<Plus size={15} />}
+              onClick={() => openBookingDrawer()}
+            >
+              Nueva reserva
+            </Button>
+          )}
         </div>
       </div>
 
@@ -953,7 +972,10 @@ export function BookingsView() {
                         key={`${slot.starts_at}_${slot.ends_at}_${idx}`}
                         type="button"
                         className="pill-btn row-sm"
-                        onClick={() => openBookingDrawer(localVal)}
+                        disabled={!canCreateBooking}
+                        onClick={() => {
+                          if (canCreateBooking) openBookingDrawer(localVal);
+                        }}
                       >
                         <Clock size={12} />
                         <span>
@@ -1038,14 +1060,16 @@ export function BookingsView() {
           emptyDescription="No hay reservas para el rango o filtro seleccionado."
           emptyIcon={<CalendarClock size={22} />}
           emptyAction={
-            <Button
-              variant="primary"
-              size="sm"
-              icon={<Plus size={14} />}
-              onClick={() => openBookingDrawer()}
-            >
-              Nueva reserva
-            </Button>
+            canCreateBooking ? (
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<Plus size={14} />}
+                onClick={() => openBookingDrawer()}
+              >
+                Nueva reserva
+              </Button>
+            ) : undefined
           }
         />
       </div>

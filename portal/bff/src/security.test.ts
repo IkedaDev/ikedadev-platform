@@ -446,6 +446,7 @@ describe('[BFF-05] Telemetry Track — Anti-Audit-Forgery & Actor Integrity', ()
       app.use('/api/telemetry/*', async (c, next) => {
         c.set('actorId' as never, ACTOR_UUID as never);
         c.set('requestId' as never, 'req-server-123' as never);
+        c.set('roles' as never, ['tenant:member', 'telemetry:write'] as never);
         c.set('authorization' as never, 'Bearer member-jwt' as never);
         await next();
       });
@@ -554,6 +555,7 @@ describe('[BFF-08] Booking Orchestration Resilience', () => {
       c.set('tenantId' as never, TENANT_A_ID as never);
       c.set('actorId' as never, TENANT_A_ID as never);
       c.set('requestId' as never, 'req-booking-test' as never);
+      c.set('roles' as never, ['tenant:member', 'bookings:write', 'events:write'] as never);
       c.set('authorization' as never, 'Bearer jwt' as never);
       await next();
     });
@@ -898,5 +900,66 @@ describe('[BFF-11] Media API Routes — Auth Guard, Bearer-Only & UUID Validatio
     const headerKeysLower = Object.keys(capturedHeaders).map((k) => k.toLowerCase());
     assert.equal(capturedHeaders['Authorization'], 'Bearer user-media-jwt');
     assert.equal(headerKeysLower.includes('x-api-key'), false);
+  });
+});
+
+describe('[BFF-12] Lightweight Session RBAC Pre-Validation', () => {
+  function mountWithRoles(roles: string[]) {
+    const app = new Hono();
+    app.use('/api/*', async (c, next) => {
+      c.set('tenantId' as never, TENANT_A_ID as never);
+      c.set('roles' as never, roles as never);
+      c.set('authMethod' as never, 'session' as never);
+      c.set('authorization' as never, 'Bearer user-rbac-jwt' as never);
+      await next();
+    });
+    app.route('/api/identity', identityRoutes);
+    app.route('/api/content', contentRoutes);
+    app.route('/api/media', mediaRoutes);
+    return app;
+  }
+
+  it('blocks staff from listing identity users, publishing/deleting articles, managing webhooks, uploading branding media, or deleting media', async () => {
+    let fetchCalled = false;
+    globalThis.fetch = (async () => {
+      fetchCalled = true;
+      return new Response(JSON.stringify({ success: true, data: {} }), { status: 200 });
+    }) as typeof fetch;
+
+    const app = mountWithRoles([
+      'tenant:member',
+      'content:read',
+      'content:write',
+      'media:read',
+      'media:write',
+    ]);
+
+    const cases: Array<[string, string, unknown?]> = [
+      ['GET', '/api/identity/users'],
+      ['GET', '/api/content/webhooks'],
+      ['PATCH', `/api/content/articles/${TENANT_A_ID}/status`, { status: 'PUBLISHED' }],
+      ['DELETE', `/api/content/articles/${TENANT_A_ID}`],
+      [
+        'POST',
+        '/api/media/presign',
+        {
+          file_name: 'logo.png',
+          mime_type: 'image/png',
+          size_bytes: 1024,
+          context: 'branding',
+        },
+      ],
+      ['DELETE', `/api/media/${TENANT_A_ID}`],
+    ];
+
+    for (const [method, path, body] of cases) {
+      const res = await app.request(path, {
+        method,
+        headers: body ? { 'Content-Type': 'application/json' } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      assert.equal(res.status, 403, `Expected 403 on ${method} ${path}`);
+    }
+    assert.equal(fetchCalled, false);
   });
 });

@@ -1,7 +1,9 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
+import { canWriteCrm, forbiddenResponse } from '../auth/permissions.js';
 import { crmClient } from '../clients/crmClient.js';
 import { telemetryClient } from '../clients/telemetryClient.js';
+import { getAuthRequestContext as getCtx } from '../middleware/auth.js';
 import type { Criteria } from '../types/platform.js';
 
 const createClientSchema = z.object({
@@ -16,8 +18,6 @@ const createClientSchema = z.object({
 });
 
 const updateClientSchema = createClientSchema.partial();
-
-import { getAuthRequestContext as getCtx } from '../middleware/auth.js';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -34,6 +34,9 @@ clientsRoutes.post('/search', async (c) => {
 // POST /api/clients
 clientsRoutes.post('/', async (c) => {
   const ctx = getCtx(c);
+  if (!canWriteCrm(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para crear clientes.');
+  }
   const raw = await c.req.json().catch(() => null);
   const parsed = createClientSchema.safeParse(raw);
   if (!parsed.success) {
@@ -73,6 +76,9 @@ clientsRoutes.post('/', async (c) => {
 // PATCH /api/clients/:id
 clientsRoutes.patch('/:id', async (c) => {
   const ctx = getCtx(c);
+  if (!canWriteCrm(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para editar clientes.');
+  }
   const id = c.req.param('id');
   if (!UUID_REGEX.test(id)) {
     return c.json(
@@ -118,6 +124,9 @@ clientsRoutes.patch('/:id', async (c) => {
 // DELETE /api/clients/:id
 clientsRoutes.delete('/:id', async (c) => {
   const ctx = getCtx(c);
+  if (!canWriteCrm(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para eliminar clientes.');
+  }
   const id = c.req.param('id');
   if (!UUID_REGEX.test(id)) {
     return c.json(

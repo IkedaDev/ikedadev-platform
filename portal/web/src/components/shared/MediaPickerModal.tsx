@@ -1,8 +1,8 @@
 import { Image as ImageIcon, Link2, Upload } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
-import { bffClient } from '../../api/bffClient';
+import { BffApiError, bffClient } from '../../api/bffClient';
 import type { MediaAsset, MediaContext } from '../../types/api';
-import { Button, EmptyState, Input, useModal, useToast } from '../../ui';
+import { Button, EmptyState, Input, Skeleton, useModal, useToast } from '../../ui';
 
 const ALLOWED_MIME = ['image/webp', 'image/jpeg', 'image/png', 'image/avif'];
 
@@ -19,11 +19,12 @@ export function isSafeMediaUrl(raw: string): boolean {
 
 interface MediaPickerBodyProps {
   context: MediaContext;
+  allowUpload: boolean;
   onSelect: (url: string, asset?: MediaAsset) => void;
   onClose: () => void;
 }
 
-function MediaPickerBody({ context, onSelect, onClose }: MediaPickerBodyProps) {
+function MediaPickerBody({ context, allowUpload, onSelect, onClose }: MediaPickerBodyProps) {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -94,7 +95,9 @@ function MediaPickerBody({ context, onSelect, onClose }: MediaPickerBodyProps) {
       onSelect(asset.public_url, asset);
       onClose();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'No se pudo subir la imagen');
+      if (!(err instanceof BffApiError && err.notified)) {
+        toast.error(err instanceof Error ? err.message : 'No se pudo subir la imagen');
+      }
     } finally {
       setUploading(false);
     }
@@ -121,7 +124,7 @@ function MediaPickerBody({ context, onSelect, onClose }: MediaPickerBodyProps) {
         />
         <Button
           type="button"
-          size="sm"
+          size="md"
           variant="secondary"
           icon={<Link2 size={14} />}
           disabled={!isSafeMediaUrl(externalUrl)}
@@ -132,7 +135,7 @@ function MediaPickerBody({ context, onSelect, onClose }: MediaPickerBodyProps) {
       </div>
 
       {/* Filter + Upload */}
-      <div className="row-between wrap gap-sm">
+      <div className="row-between row-wrap gap-sm">
         <div className="filter-pills">
           <button
             type="button"
@@ -150,33 +153,53 @@ function MediaPickerBody({ context, onSelect, onClose }: MediaPickerBodyProps) {
           </button>
         </div>
 
-        <div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/webp,image/jpeg,image/png,image/avif"
-            style={{ display: 'none' }}
-            onChange={handleUpload}
-          />
-          <Button
-            type="button"
-            size="sm"
-            variant="primary"
-            icon={<Upload size={14} />}
-            isLoading={uploading}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            Subir nueva
-          </Button>
-        </div>
+        {allowUpload && (
+          <div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/webp,image/jpeg,image/png,image/avif"
+              className="visually-hidden"
+              onChange={handleUpload}
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="primary"
+              icon={<Upload size={14} />}
+              isLoading={uploading}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              Subir nueva
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Assets Grid */}
-      {!loading && assets.length === 0 ? (
+      {loading ? (
+        <div className="media-grid">
+          {Array.from({ length: 6 }).map((_, idx) => (
+            <div key={idx} className="media-card">
+              <div className="media-card-preview">
+                <Skeleton variant="card" />
+              </div>
+              <div className="media-card-body stack-xs">
+                <Skeleton variant="line" />
+                <Skeleton variant="line-sm" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : assets.length === 0 ? (
         <EmptyState
           icon={<ImageIcon size={24} />}
           title="No hay imágenes en este contexto"
-          description="Sube una nueva imagen o pega una URL externa arriba."
+          description={
+            allowUpload
+              ? 'Sube una nueva imagen o pega una URL externa arriba.'
+              : 'No hay imágenes disponibles en este contexto.'
+          }
         />
       ) : (
         <div className="media-grid">
@@ -184,8 +207,7 @@ function MediaPickerBody({ context, onSelect, onClose }: MediaPickerBodyProps) {
             <button
               key={asset.id}
               type="button"
-              className="media-card"
-              style={{ textAlign: 'left', cursor: 'pointer', padding: 0 }}
+              className="media-card media-card-selectable"
               onClick={() => {
                 onSelect(asset.public_url, asset);
                 onClose();
@@ -226,6 +248,7 @@ export function useMediaPicker() {
     (options: {
       context: MediaContext;
       title?: string;
+      allowUpload?: boolean;
       onSelect: (url: string, asset?: MediaAsset) => void;
     }) => {
       const modalId = openModal({
@@ -235,6 +258,7 @@ export function useMediaPicker() {
         content: (
           <MediaPickerBody
             context={options.context}
+            allowUpload={options.allowUpload ?? true}
             onSelect={options.onSelect}
             onClose={() => closeModal(modalId)}
           />

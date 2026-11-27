@@ -30,6 +30,7 @@ export function AppLayout({
     <div className="app-shell">
       <Sidebar
         active={active}
+        user={user}
         onSelect={onSelect}
         mobileOpen={mobileMenuOpen}
         onCloseMobile={() => setMobileMenuOpen(false)}

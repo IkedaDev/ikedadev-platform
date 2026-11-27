@@ -94,7 +94,7 @@ export interface TenantSettingsResponse {
   tenantId: string;
   slug: string;
   name: string;
-  canEdit?: boolean;
+  canEdit: boolean;
   settings: TenantSettings;
 }
 
@@ -238,6 +238,11 @@ export interface DashboardSummary {
     upcomingBookingsCount: number;
     upcomingRevenue: number;
     currency: string;
+  };
+  modules?: {
+    crm: boolean;
+    catalog: boolean;
+    bookings: boolean;
   };
   recentClients: Client[];
   recentCatalogItems: CatalogItem[];

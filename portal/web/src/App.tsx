@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { bffClient, registerUnauthorizedHandler } from './api/bffClient';
 import { tracker } from './api/tracker';
+import { canAccessSection } from './auth/permissions';
 import { AppLayout } from './components/AppLayout';
-import { NAV_ITEMS, type NavSection } from './components/Sidebar';
+import type { NavSection } from './components/Sidebar';
 import { useTheme } from './context/ThemeProvider';
 import type { AuthUser, BffHealth } from './types/api';
 import { Skeleton, useDrawer, useModal, useToast } from './ui';
@@ -31,6 +32,7 @@ export function App() {
   const [healthLoading, setHealthLoading] = useState(false);
 
   const settingsDirtyRef = useRef(false);
+  const loggingOutRef = useRef(false);
 
   /**
    * Purges all tenant-scoped in-memory state, visual branding, telemetry queues,
@@ -108,18 +110,17 @@ export function App() {
   }, [checkSession, checkHealth]);
 
   useEffect(() => {
-    if (user) {
-      void reloadSettings();
-    }
-  }, [user, reloadSettings]);
+    if (!authChecked) return;
+    void reloadSettings({ allowUnauthenticated: !user });
+  }, [authChecked, user, reloadSettings]);
 
-  // Dynamically guard disabled feature routes -> fall back to dashboard
+  // Dynamically guard disabled feature & unauthorized routes -> fall back to dashboard
   useEffect(() => {
-    const navItem = NAV_ITEMS.find((item) => item.id === section);
-    if (navItem?.featureKey && settings.features[navItem.featureKey] === false) {
+    if (!user) return;
+    if (!canAccessSection(user, section, settings.features)) {
       setSection('dashboard');
     }
-  }, [section, settings.features]);
+  }, [user, section, settings.features]);
 
   // Preserve telemetry page view tracking on navigation
   useEffect(() => {
@@ -133,6 +134,10 @@ export function App() {
   const handleSelectSection = useCallback(
     async (next: NavSection) => {
       if (next === section) return;
+      if (user && !canAccessSection(user, next, settings.features)) {
+        setSection('dashboard');
+        return;
+      }
       if (section === 'settings' && settingsDirtyRef.current) {
         const ok = await confirm({
           title: 'Cambios sin guardar',
@@ -147,7 +152,7 @@ export function App() {
       }
       setSection(next);
     },
-    [section, confirm],
+    [section, confirm, user, settings.features],
   );
 
   const handleSettingsDirtyChange = useCallback((dirty: boolean) => {
@@ -155,6 +160,8 @@ export function App() {
   }, []);
 
   const handleLogout = async () => {
+    if (loggingOutRef.current) return;
+    loggingOutRef.current = true;
     try {
       const res = await bffClient.logout();
       clearClientSessionState();
@@ -164,6 +171,8 @@ export function App() {
       }
     } catch {
       clearClientSessionState();
+    } finally {
+      loggingOutRef.current = false;
     }
   };
 
@@ -201,19 +210,36 @@ export function App() {
     >
       {section === 'dashboard' && (
         <DashboardView
+          user={user}
           onNavigate={(next) => {
             void handleSelectSection(next);
           }}
         />
       )}
-      {section === 'clients' && settings.features.crm !== false && <ClientsView />}
-      {section === 'catalog' && settings.features.catalog !== false && <CatalogView />}
-      {section === 'bookings' && settings.features.bookings !== false && <BookingsView />}
-      {section === 'content' && settings.features.content !== false && <ContentView user={user} />}
-      {section === 'media' && <MediaView user={user} />}
-      {section === 'telemetry' && settings.features.telemetry !== false && <TelemetryView />}
-      {section === 'identity' && <IdentityView />}
-      {section === 'settings' && <SettingsView onDirtyChange={handleSettingsDirtyChange} />}
+      {section === 'clients' && canAccessSection(user, 'clients', settings.features) && (
+        <ClientsView user={user} />
+      )}
+      {section === 'catalog' && canAccessSection(user, 'catalog', settings.features) && (
+        <CatalogView user={user} />
+      )}
+      {section === 'bookings' && canAccessSection(user, 'bookings', settings.features) && (
+        <BookingsView user={user} />
+      )}
+      {section === 'content' && canAccessSection(user, 'content', settings.features) && (
+        <ContentView user={user} />
+      )}
+      {section === 'media' && canAccessSection(user, 'media', settings.features) && (
+        <MediaView user={user} />
+      )}
+      {section === 'telemetry' && canAccessSection(user, 'telemetry', settings.features) && (
+        <TelemetryView />
+      )}
+      {section === 'identity' && canAccessSection(user, 'identity', settings.features) && (
+        <IdentityView user={user} />
+      )}
+      {section === 'settings' && canAccessSection(user, 'settings', settings.features) && (
+        <SettingsView user={user} onDirtyChange={handleSettingsDirtyChange} />
+      )}
     </AppLayout>
   );
 }

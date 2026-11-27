@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
+import { canWriteEvents, forbiddenResponse } from '../auth/permissions.js';
 import { eventsClient } from '../clients/eventsClient.js';
-import type { RequestContext } from '../clients/http.js';
+import { getAuthRequestContext as getCtx } from '../middleware/auth.js';
 
 const createCalendarSchema = z.object({
   name: z.string().trim().min(1, 'El nombre del calendario es obligatorio'),
@@ -9,8 +10,6 @@ const createCalendarSchema = z.object({
   allow_overlaps: z.boolean().optional().default(false),
   working_hours: z.record(z.unknown()).optional().nullable(),
 });
-
-import { getAuthRequestContext as getCtx } from '../middleware/auth.js';
 
 export const calendarsRoutes = new Hono();
 
@@ -26,6 +25,9 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 // POST /api/calendars
 calendarsRoutes.post('/', async (c) => {
   const ctx = getCtx(c);
+  if (!canWriteEvents(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para crear calendarios.');
+  }
   const raw = await c.req.json().catch(() => null);
   const parsed = createCalendarSchema.safeParse(raw);
   if (!parsed.success) {

@@ -7,6 +7,7 @@ import { Button, Input, StatusBadge, Textarea, useDrawer, useModal, useToast } f
 export interface TaxonomyTabProps {
   categories: ContentCategory[];
   tags: ContentTag[];
+  canWrite: boolean;
   onRefresh: () => void;
 }
 
@@ -92,7 +93,7 @@ function CategoryForm({
   );
 }
 
-export function TaxonomyTab({ categories, tags, onRefresh }: TaxonomyTabProps) {
+export function TaxonomyTab({ categories, tags, canWrite, onRefresh }: TaxonomyTabProps) {
   const { openDrawer, closeDrawer } = useDrawer();
   const { confirm } = useModal();
   const { toast } = useToast();
@@ -151,13 +152,21 @@ export function TaxonomyTab({ categories, tags, onRefresh }: TaxonomyTabProps) {
   };
 
   const handleDeleteTag = async (tag: ContentTag) => {
+    if (!canWrite || busyRowId) return;
+    const ok = await confirm({
+      title: 'Eliminar etiqueta',
+      message: `¿Eliminar la etiqueta "#${tag.name}"? Se desvinculará de los artículos asociados.`,
+      variant: 'danger',
+      confirmLabel: 'Eliminar',
+    });
+    if (!ok) return;
     setBusyRowId(tag.id);
     try {
       await bffClient.deleteContentTag(tag.id);
       toast.success('Etiqueta eliminada');
       onRefresh();
     } catch {
-      // handled
+      // handled globally
     } finally {
       setBusyRowId(null);
     }
@@ -171,14 +180,16 @@ export function TaxonomyTab({ categories, tags, onRefresh }: TaxonomyTabProps) {
             <h3 className="card-title">Categorías</h3>
             <p className="card-subtitle">Organiza los artículos por tema editorial</p>
           </div>
-          <Button
-            size="sm"
-            variant="primary"
-            icon={<FolderPlus size={14} />}
-            onClick={() => openCategoryDrawer(null)}
-          >
-            Nueva
-          </Button>
+          {canWrite && (
+            <Button
+              size="sm"
+              variant="primary"
+              icon={<FolderPlus size={14} />}
+              onClick={() => openCategoryDrawer(null)}
+            >
+              Nueva
+            </Button>
+          )}
         </div>
 
         <div className="stack-xs">
@@ -194,24 +205,27 @@ export function TaxonomyTab({ categories, tags, onRefresh }: TaxonomyTabProps) {
                   </div>
                   {cat.description && <p className="text-xs text-muted">{cat.description}</p>}
                 </div>
-                <div className="row-xs">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    icon={<Pencil size={13} />}
-                    disabled={busyRowId === cat.id}
-                    onClick={() => openCategoryDrawer(cat)}
-                    aria-label={`Editar ${cat.name}`}
-                  />
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    icon={<Trash2 size={13} />}
-                    disabled={busyRowId === cat.id}
-                    onClick={() => handleDeleteCategory(cat)}
-                    aria-label={`Eliminar ${cat.name}`}
-                  />
-                </div>
+                {canWrite && (
+                  <div className="row-xs">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      icon={<Pencil size={13} />}
+                      disabled={busyRowId === cat.id}
+                      onClick={() => openCategoryDrawer(cat)}
+                      aria-label={`Editar ${cat.name}`}
+                    />
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      icon={<Trash2 size={13} />}
+                      disabled={busyRowId === cat.id}
+                      isLoading={busyRowId === cat.id}
+                      onClick={() => handleDeleteCategory(cat)}
+                      aria-label={`Eliminar ${cat.name}`}
+                    />
+                  </div>
+                )}
               </div>
             ))
           )}
@@ -224,25 +238,27 @@ export function TaxonomyTab({ categories, tags, onRefresh }: TaxonomyTabProps) {
           <p className="card-subtitle">Palabras clave reutilizables para filtrado y SEO</p>
         </div>
 
-        <form className="row-sm" onSubmit={handleCreateTag}>
-          <Input
-            placeholder="Ej: Rust, SEO, Tutorial..."
-            value={newTagName}
-            onChange={(e) => setNewTagName(e.target.value)}
-          />
-          <Button
-            type="submit"
-            size="sm"
-            variant="primary"
-            icon={<Plus size={14} />}
-            isLoading={creatingTag}
-            disabled={!newTagName.trim() || creatingTag}
-          >
-            Agregar
-          </Button>
-        </form>
+        {canWrite && (
+          <form className="row-sm" onSubmit={handleCreateTag}>
+            <Input
+              placeholder="Ej: Rust, SEO, Tutorial..."
+              value={newTagName}
+              onChange={(e) => setNewTagName(e.target.value)}
+            />
+            <Button
+              type="submit"
+              size="md"
+              variant="primary"
+              icon={<Plus size={14} />}
+              isLoading={creatingTag}
+              disabled={!newTagName.trim() || creatingTag}
+            >
+              Agregar
+            </Button>
+          </form>
+        )}
 
-        <div className="chip-list" style={{ marginTop: 14 }}>
+        <div className="chip-list taxonomy-tag-list">
           {tags.length === 0 ? (
             <p className="text-sm text-muted">Aún no hay etiquetas creadas.</p>
           ) : (
@@ -250,15 +266,17 @@ export function TaxonomyTab({ categories, tags, onRefresh }: TaxonomyTabProps) {
               <span key={tag.id} className="tag-chip">
                 <Tag size={12} />
                 <span>{tag.name}</span>
-                <button
-                  type="button"
-                  className="tag-chip-del"
-                  disabled={busyRowId === tag.id}
-                  onClick={() => handleDeleteTag(tag)}
-                  aria-label={`Eliminar etiqueta ${tag.name}`}
-                >
-                  ×
-                </button>
+                {canWrite && (
+                  <button
+                    type="button"
+                    className="tag-chip-del"
+                    disabled={busyRowId === tag.id}
+                    onClick={() => handleDeleteTag(tag)}
+                    aria-label={`Eliminar etiqueta ${tag.name}`}
+                  >
+                    ×
+                  </button>
+                )}
               </span>
             ))
           )}

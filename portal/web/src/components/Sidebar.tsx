@@ -12,8 +12,9 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect } from 'react';
+import { canAccessSection } from '../auth/permissions';
 import { useTheme } from '../context/ThemeProvider';
-import type { BffHealth, TenantFeatures } from '../types/api';
+import type { AuthUser, BffHealth, TenantFeatures } from '../types/api';
 import { BrandLogo, Button, useBodyScrollLock } from '../ui';
 
 export type NavSection =
@@ -72,6 +73,7 @@ export const NAV_ITEMS: NavItemConfig[] = [
 
 export interface SidebarProps {
   active: NavSection;
+  user: AuthUser;
   onSelect: (section: NavSection) => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
@@ -82,6 +84,7 @@ export interface SidebarProps {
 
 export function Sidebar({
   active,
+  user,
   onSelect,
   mobileOpen,
   onCloseMobile,
@@ -106,9 +109,7 @@ export function Sidebar({
   }, [mobileOpen, onCloseMobile]);
 
   const displayName = branding.displayName?.trim() || 'Kropy';
-  const visibleItems = NAV_ITEMS.filter(
-    (item) => !item.featureKey || features[item.featureKey] !== false,
-  );
+  const visibleItems = NAV_ITEMS.filter((item) => canAccessSection(user, item.id, features));
   const mainItems = visibleItems.filter((item) => item.section === 'main');
   const adminItems = visibleItems.filter((item) => item.section === 'admin');
 
@@ -167,21 +168,25 @@ export function Sidebar({
             );
           })}
 
-          <div className="sidebar-section-label">Administración</div>
-          {adminItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                className={`nav-item ${active === item.id ? 'active' : ''}`}
-                onClick={() => handleSelect(item.id)}
-              >
-                <Icon size={18} />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
+          {adminItems.length > 0 && (
+            <>
+              <div className="sidebar-section-label">Administración</div>
+              {adminItems.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`nav-item ${active === item.id ? 'active' : ''}`}
+                    onClick={() => handleSelect(item.id)}
+                  >
+                    <Icon size={18} />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+            </>
+          )}
         </nav>
 
         <div className="sidebar-footer">

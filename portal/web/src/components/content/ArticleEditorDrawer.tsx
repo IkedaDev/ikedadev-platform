@@ -26,6 +26,13 @@ export interface ArticleEditorDrawerProps {
   onClose: () => void;
 }
 
+const STATUS_HUMAN_LABEL: Record<string, string> = {
+  DRAFT: 'Borrador',
+  SCHEDULED: 'Programado',
+  PUBLISHED: 'Publicado',
+  ARCHIVED: 'Archivado',
+};
+
 export function ArticleEditorDrawer({
   article,
   categories,
@@ -203,12 +210,18 @@ export function ArticleEditorDrawer({
     }
   };
 
+  const isBusy = saving || busyAction !== null;
+
   return (
     <form className="stack-md" onSubmit={handleSave}>
       {isLockedForStaff && (
-        <div className="content-notice">
-          Este artículo está en estado <strong>{article?.status}</strong>. Solo un administrador
-          (`content:publish`) puede editar artículos publicados o programados.
+        <div className="alert-banner alert-banner-info" role="status">
+          <div className="alert-banner-body">
+            Este artículo está en estado{' '}
+            <strong>{STATUS_HUMAN_LABEL[article?.status ?? ''] ?? article?.status}</strong>. Solo un
+            administrador o editor con permiso de publicación puede modificar artículos ya
+            publicados, programados o archivados.
+          </div>
         </div>
       )}
 
@@ -301,33 +314,32 @@ export function ArticleEditorDrawer({
               </div>
             )}
 
-            <div className="stack-xs">
-              <div className="row-sm">
-                <Input
-                  label="Imagen de portada"
-                  disabled={isLockedForStaff}
-                  value={coverImageUrl}
-                  onChange={(e) => setCoverImageUrl(e.target.value)}
-                  placeholder="https://media.ejemplo.com/portada.webp"
-                />
-                {!isLockedForStaff && (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    icon={<ImageIcon size={14} />}
-                    onClick={() =>
-                      openMediaPicker({
-                        context: 'content',
-                        title: 'Elegir imagen de portada',
-                        onSelect: (url) => setCoverImageUrl(url),
-                      })
-                    }
-                  >
-                    Galería
-                  </Button>
-                )}
-              </div>
+            <div className="input-action-row">
+              <Input
+                label="Imagen de portada"
+                disabled={isLockedForStaff}
+                value={coverImageUrl}
+                onChange={(e) => setCoverImageUrl(e.target.value)}
+                placeholder="https://media.ejemplo.com/portada.webp"
+              />
+              {!isLockedForStaff && (
+                <Button
+                  type="button"
+                  size="md"
+                  variant="secondary"
+                  className="input-action-btn"
+                  icon={<ImageIcon size={15} />}
+                  onClick={() =>
+                    openMediaPicker({
+                      context: 'content',
+                      title: 'Elegir imagen de portada',
+                      onSelect: (url) => setCoverImageUrl(url),
+                    })
+                  }
+                >
+                  Galería
+                </Button>
+              )}
             </div>
 
             <div className="form-grid-2">
@@ -364,18 +376,18 @@ export function ArticleEditorDrawer({
               placeholder="https://..."
             />
 
-            <label className="row-sm text-sm">
+            <label className="checkbox-row">
               <input
                 type="checkbox"
                 disabled={isLockedForStaff}
                 checked={noindex}
                 onChange={(e) => setNoindex(e.target.checked)}
               />
-              <span>No indexar en buscadores (`noindex`)</span>
+              <span>No indexar en buscadores (noindex)</span>
             </label>
 
             {article && canPublish && (
-              <div className="row-sm">
+              <div className="input-action-row">
                 <Input
                   label="Programar publicación"
                   type="datetime-local"
@@ -384,10 +396,12 @@ export function ArticleEditorDrawer({
                 />
                 <Button
                   type="button"
-                  size="sm"
+                  size="md"
                   variant="secondary"
-                  icon={<Clock size={14} />}
-                  disabled={!scheduledFor || busyAction !== null}
+                  className="input-action-btn"
+                  icon={<Clock size={15} />}
+                  isLoading={busyAction === 'schedule'}
+                  disabled={!scheduledFor || isBusy}
                   onClick={handleSchedule}
                 >
                   Programar
@@ -452,7 +466,7 @@ export function ArticleEditorDrawer({
       )}
 
       {/* Action bar */}
-      <div className="row-between wrap gap-sm">
+      <div className="row-between row-wrap gap-sm">
         <div className="row-xs">
           {article && (
             <Button
@@ -460,7 +474,8 @@ export function ArticleEditorDrawer({
               variant="ghost"
               size="sm"
               icon={<Eye size={14} />}
-              disabled={busyAction !== null}
+              isLoading={busyAction === 'preview'}
+              disabled={isBusy}
               onClick={handlePreview}
             >
               Vista previa
@@ -472,7 +487,8 @@ export function ArticleEditorDrawer({
               variant="secondary"
               size="sm"
               icon={<Send size={14} />}
-              disabled={busyAction !== null}
+              isLoading={busyAction === 'publish'}
+              disabled={isBusy}
               onClick={handlePublishNow}
             >
               Publicar ahora
@@ -481,8 +497,8 @@ export function ArticleEditorDrawer({
         </div>
 
         <div className="row-xs">
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Cancelar
+          <Button type="button" variant="ghost" onClick={onClose} disabled={isBusy}>
+            {isLockedForStaff ? 'Cerrar' : 'Cancelar'}
           </Button>
           {!isLockedForStaff && (
             <Button
@@ -490,7 +506,7 @@ export function ArticleEditorDrawer({
               variant="primary"
               icon={<Save size={14} />}
               isLoading={saving}
-              disabled={!title.trim() || saving}
+              disabled={!title.trim() || isBusy}
             >
               {article ? 'Guardar cambios' : 'Crear borrador'}
             </Button>

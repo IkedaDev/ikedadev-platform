@@ -1,5 +1,10 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
+import {
+  canReadTelemetry,
+  canWriteTelemetry,
+  forbiddenResponse,
+} from '../auth/permissions.js';
 import { telemetryClient } from '../clients/telemetryClient.js';
 import { getAuthRequestContext as getCtx } from '../middleware/auth.js';
 import type {
@@ -55,6 +60,9 @@ export const telemetryRoutes = new Hono();
 // POST /api/telemetry/track
 telemetryRoutes.post('/track', async (c) => {
   const ctx = getCtx(c);
+  if (!canWriteTelemetry(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para registrar eventos de telemetría.');
+  }
   const raw = await c.req.json().catch(() => null);
   const parsed = trackBatchSchema.safeParse(raw);
 
@@ -88,6 +96,9 @@ telemetryRoutes.post('/track', async (c) => {
 // GET /api/telemetry/events?page=1&limit=25&kind=TRACKING|AUDIT&event_name=...&source=...
 telemetryRoutes.get('/events', async (c) => {
   const ctx = getCtx(c);
+  if (!canReadTelemetry(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para consultar eventos de telemetría.');
+  }
   const page = parsePositiveInt(c.req.query('page'), 1, 1000);
   const limit = parsePositiveInt(c.req.query('limit'), 25, 100);
   const kind = parseKind(c.req.query('kind'));
@@ -120,6 +131,9 @@ telemetryRoutes.get('/events', async (c) => {
 // GET /api/telemetry/metrics?from=...&to=...&kind=...&source=...
 telemetryRoutes.get('/metrics', async (c) => {
   const ctx = getCtx(c);
+  if (!canReadTelemetry(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para consultar métricas de telemetría.');
+  }
   const now = new Date();
   const defaultFrom = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const defaultTo = now.toISOString();
@@ -141,6 +155,9 @@ telemetryRoutes.get('/metrics', async (c) => {
 // GET /api/telemetry/clients/:clientId/timeline?page=1&limit=25&kind=TRACKING|AUDIT
 telemetryRoutes.get('/clients/:clientId/timeline', async (c) => {
   const ctx = getCtx(c);
+  if (!canReadTelemetry(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para consultar el historial de actividad.');
+  }
   const clientId = c.req.param('clientId');
   if (!UUID_REGEX.test(clientId)) {
     return c.json(

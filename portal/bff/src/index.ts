@@ -110,10 +110,23 @@ app.onError((err, c) => {
       err.status >= 400 && err.status <= 599 ? err.status : 502
     ) as ContentfulStatusCode;
 
+    const code =
+      status === 401
+        ? 'UNAUTHENTICATED'
+        : status === 403
+          ? 'FORBIDDEN'
+          : status === 404
+            ? 'NOT_FOUND'
+            : status === 409
+              ? 'CONFLICT'
+              : status === 422
+                ? 'VALIDATION_ERROR'
+                : 'UPSTREAM_ERROR';
+
     return c.json(
       {
         success: false,
-        code: status === 409 ? 'CONFLICT' : 'UPSTREAM_ERROR',
+        code,
         service: err.service,
         message: err.message,
         details: err.details,

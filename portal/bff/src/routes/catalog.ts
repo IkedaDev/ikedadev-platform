@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
+import { canWriteCatalog, forbiddenResponse } from '../auth/permissions.js';
 import { catalogClient } from '../clients/catalogClient.js';
 import { telemetryClient } from '../clients/telemetryClient.js';
 import type {
@@ -120,6 +121,9 @@ categoriesRoutes.get('/', async (c) => {
 // POST /api/categories
 categoriesRoutes.post('/', async (c) => {
   const ctx = getCtx(c);
+  if (!canWriteCatalog(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para crear categorías de catálogo.');
+  }
   const raw = await c.req.json().catch(() => null);
   const parsed = createCategorySchema.safeParse(raw);
   if (!parsed.success) {
@@ -139,6 +143,9 @@ categoriesRoutes.post('/', async (c) => {
 // PATCH /api/categories/:id
 categoriesRoutes.patch('/:id', async (c) => {
   const ctx = getCtx(c);
+  if (!canWriteCatalog(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para editar categorías de catálogo.');
+  }
   const id = c.req.param('id');
   if (!UUID_REGEX.test(id)) {
     return c.json(
@@ -185,6 +192,9 @@ categoriesRoutes.patch('/:id', async (c) => {
 // DELETE /api/categories/:id
 categoriesRoutes.delete('/:id', async (c) => {
   const ctx = getCtx(c);
+  if (!canWriteCatalog(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para eliminar categorías de catálogo.');
+  }
   const id = c.req.param('id');
   if (!UUID_REGEX.test(id)) {
     return c.json(
@@ -213,6 +223,9 @@ itemsRoutes.post('/search', async (c) => {
 // POST /api/items
 itemsRoutes.post('/', async (c) => {
   const ctx = getCtx(c);
+  if (!canWriteCatalog(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para crear ítems del catálogo.');
+  }
   const raw = await c.req.json().catch(() => null);
   const parsed = createItemSchema.safeParse(raw);
   if (!parsed.success) {
@@ -249,6 +262,9 @@ itemsRoutes.post('/', async (c) => {
 // PATCH /api/items/:id
 itemsRoutes.patch('/:id', async (c) => {
   const ctx = getCtx(c);
+  if (!canWriteCatalog(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para editar ítems del catálogo.');
+  }
   const id = c.req.param('id');
   if (!UUID_REGEX.test(id)) {
     return c.json(
@@ -332,6 +348,9 @@ itemsRoutes.patch('/:id', async (c) => {
 // DELETE /api/items/:id
 itemsRoutes.delete('/:id', async (c) => {
   const ctx = getCtx(c);
+  if (!canWriteCatalog(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para eliminar ítems del catálogo.');
+  }
   const id = c.req.param('id');
   if (!UUID_REGEX.test(id)) {
     return c.json(

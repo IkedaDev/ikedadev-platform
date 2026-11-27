@@ -1,8 +1,9 @@
 import { Folder, FolderPlus, Package, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { BffApiError, bffClient } from '../api/bffClient';
+import { usePermissions } from '../auth/permissions';
 import { useTheme } from '../context/ThemeProvider';
-import type { CatalogItem, CatalogItemType, Category, Criteria } from '../types/api';
+import type { AuthUser, CatalogItem, CatalogItemType, Category, Criteria } from '../types/api';
 import {
   Button,
   DataTable,
@@ -400,8 +401,14 @@ function CategoryDrawerForm({
   );
 }
 
-export function CatalogView() {
+export interface CatalogViewProps {
+  user: AuthUser;
+}
+
+export function CatalogView({ user }: CatalogViewProps) {
   const { settings } = useTheme();
+  const { can } = usePermissions(user);
+  const canWrite = can('catalog:write');
   const { openDrawer, closeDrawer } = useDrawer();
   const { confirm } = useModal();
   const { toast } = useToast();
@@ -598,35 +605,39 @@ export function CatalogView() {
           />
         ),
       },
-      {
-        key: 'actions',
-        header: 'Acciones',
-        align: 'right',
-        render: (c) => (
-          <div className="row-end">
-            <Button
-              variant="secondary"
-              size="sm"
-              icon={<Pencil size={13} />}
-              onClick={() => openCategoryDrawer(c)}
-              aria-label={`Editar categoría ${c.name}`}
-              title="Editar categoría"
-            />
-            <Button
-              variant="danger"
-              size="sm"
-              icon={<Trash2 size={13} />}
-              onClick={() => handleDeleteCategory(c)}
-              disabled={busyRowId === c.id}
-              isLoading={busyRowId === c.id}
-              aria-label={`Eliminar categoría ${c.name}`}
-              title="Eliminar categoría"
-            />
-          </div>
-        ),
-      },
+      ...(canWrite
+        ? [
+            {
+              key: 'actions',
+              header: 'Acciones',
+              align: 'right' as const,
+              render: (c: Category) => (
+                <div className="row-end">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<Pencil size={13} />}
+                    onClick={() => openCategoryDrawer(c)}
+                    aria-label={`Editar categoría ${c.name}`}
+                    title="Editar categoría"
+                  />
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    icon={<Trash2 size={13} />}
+                    onClick={() => handleDeleteCategory(c)}
+                    disabled={busyRowId === c.id}
+                    isLoading={busyRowId === c.id}
+                    aria-label={`Eliminar categoría ${c.name}`}
+                    title="Eliminar categoría"
+                  />
+                </div>
+              ),
+            },
+          ]
+        : []),
     ],
-    [busyRowId, openCategoryDrawer, handleDeleteCategory],
+    [busyRowId, canWrite, openCategoryDrawer, handleDeleteCategory],
   );
 
   const itemColumns = useMemo<DataTableColumn<CatalogItem>[]>(
@@ -691,35 +702,39 @@ export function CatalogView() {
           <span className="font-semibold">{formatMoney(i.base_price, i.currency)}</span>
         ),
       },
-      {
-        key: 'actions',
-        header: 'Acciones',
-        align: 'right',
-        render: (i) => (
-          <div className="row-end">
-            <Button
-              variant="secondary"
-              size="sm"
-              icon={<Pencil size={13} />}
-              onClick={() => openItemDrawer(i)}
-              aria-label={`Editar ${i.name}`}
-              title="Editar"
-            />
-            <Button
-              variant="danger"
-              size="sm"
-              icon={<Trash2 size={13} />}
-              onClick={() => handleDeleteItem(i)}
-              disabled={busyRowId === i.id}
-              isLoading={busyRowId === i.id}
-              aria-label={`Eliminar ${i.name}`}
-              title="Eliminar"
-            />
-          </div>
-        ),
-      },
+      ...(canWrite
+        ? [
+            {
+              key: 'actions',
+              header: 'Acciones',
+              align: 'right' as const,
+              render: (i: CatalogItem) => (
+                <div className="row-end">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<Pencil size={13} />}
+                    onClick={() => openItemDrawer(i)}
+                    aria-label={`Editar ${i.name}`}
+                    title="Editar"
+                  />
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    icon={<Trash2 size={13} />}
+                    onClick={() => handleDeleteItem(i)}
+                    disabled={busyRowId === i.id}
+                    isLoading={busyRowId === i.id}
+                    aria-label={`Eliminar ${i.name}`}
+                    title="Eliminar"
+                  />
+                </div>
+              ),
+            },
+          ]
+        : []),
     ],
-    [busyRowId, categoryMap, openItemDrawer, handleDeleteItem],
+    [busyRowId, canWrite, categoryMap, openItemDrawer, handleDeleteItem],
   );
 
   return (
@@ -731,22 +746,24 @@ export function CatalogView() {
             Organiza tus categorías, servicios agendables, productos y paquetes.
           </p>
         </div>
-        <div className="page-actions">
-          <Button
-            variant="secondary"
-            icon={<FolderPlus size={15} />}
-            onClick={() => openCategoryDrawer(null)}
-          >
-            Nueva categoría
-          </Button>
-          <Button
-            variant="primary"
-            icon={<Plus size={15} />}
-            onClick={() => openItemDrawer(null)}
-          >
-            Nuevo ítem
-          </Button>
-        </div>
+        {canWrite && (
+          <div className="page-actions">
+            <Button
+              variant="secondary"
+              icon={<FolderPlus size={15} />}
+              onClick={() => openCategoryDrawer(null)}
+            >
+              Nueva categoría
+            </Button>
+            <Button
+              variant="primary"
+              icon={<Plus size={15} />}
+              onClick={() => openItemDrawer(null)}
+            >
+              Nuevo ítem
+            </Button>
+          </div>
+        )}
       </div>
 
       {error && (
@@ -766,17 +783,23 @@ export function CatalogView() {
           isLoading={loading}
           skeletonRows={3}
           emptyTitle="Sin categorías"
-          emptyDescription="Crea categorías para agrupar tus servicios y productos."
+          emptyDescription={
+            canWrite
+              ? 'Crea categorías para agrupar tus servicios y productos.'
+              : 'Aún no hay categorías disponibles en el catálogo.'
+          }
           emptyIcon={<Folder size={22} />}
           emptyAction={
-            <Button
-              variant="secondary"
-              size="sm"
-              icon={<FolderPlus size={14} />}
-              onClick={() => openCategoryDrawer(null)}
-            >
-              Nueva categoría
-            </Button>
+            canWrite ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<FolderPlus size={14} />}
+                onClick={() => openCategoryDrawer(null)}
+              >
+                Nueva categoría
+              </Button>
+            ) : undefined
           }
         />
       </div>
@@ -811,14 +834,16 @@ export function CatalogView() {
           emptyDescription="No hay ítems que coincidan con el filtro seleccionado."
           emptyIcon={<Package size={22} />}
           emptyAction={
-            <Button
-              variant="primary"
-              size="sm"
-              icon={<Plus size={14} />}
-              onClick={() => openItemDrawer(null)}
-            >
-              Nuevo ítem
-            </Button>
+            canWrite ? (
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<Plus size={14} />}
+                onClick={() => openItemDrawer(null)}
+              >
+                Nuevo ítem
+              </Button>
+            ) : undefined
           }
         />
       </div>

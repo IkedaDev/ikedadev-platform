@@ -1,5 +1,11 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
+import {
+  canPublishContent,
+  canReadContent,
+  canWriteContent,
+  forbiddenResponse,
+} from '../auth/permissions.js';
 import { contentClient } from '../clients/contentClient.js';
 import { telemetryClient } from '../clients/telemetryClient.js';
 import { getAuthRequestContext as getCtx } from '../middleware/auth.js';
@@ -98,6 +104,9 @@ export const contentRoutes = new Hono();
 
 contentRoutes.get('/articles', async (c) => {
   const ctx = getCtx(c);
+  if (!canReadContent(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para ver los artículos.');
+  }
   const page = Math.max(1, Number(c.req.query('page') ?? 1) || 1);
   const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') ?? 20) || 20));
   const status = c.req.query('status')?.trim();
@@ -170,6 +179,10 @@ contentRoutes.get('/articles/:id', async (c) => {
 });
 
 contentRoutes.post('/articles', async (c) => {
+  const ctx = getCtx(c);
+  if (!canWriteContent(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para crear artículos.');
+  }
   const raw = await c.req.json().catch(() => null);
   const parsed = createArticleSchema.safeParse(raw);
   if (!parsed.success) {
@@ -183,12 +196,15 @@ contentRoutes.post('/articles', async (c) => {
       422,
     );
   }
-  const ctx = getCtx(c);
   const article = await contentClient.createArticle(parsed.data, ctx);
   return c.json({ success: true, data: article }, 201);
 });
 
 contentRoutes.patch('/articles/:id', async (c) => {
+  const ctx = getCtx(c);
+  if (!canWriteContent(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para editar artículos.');
+  }
   const id = c.req.param('id');
   if (!isValidUuid(id)) {
     return c.json(
@@ -209,12 +225,18 @@ contentRoutes.patch('/articles/:id', async (c) => {
       422,
     );
   }
-  const ctx = getCtx(c);
   const article = await contentClient.updateArticle(id, parsed.data, ctx);
   return c.json({ success: true, data: article });
 });
 
 contentRoutes.patch('/articles/:id/status', async (c) => {
+  const ctx = getCtx(c);
+  if (!canPublishContent(ctx.roles)) {
+    return forbiddenResponse(
+      c,
+      'No tienes permisos para publicar, programar o archivar artículos.',
+    );
+  }
   const id = c.req.param('id');
   if (!isValidUuid(id)) {
     return c.json(
@@ -235,7 +257,6 @@ contentRoutes.patch('/articles/:id/status', async (c) => {
       422,
     );
   }
-  const ctx = getCtx(c);
   const article = await contentClient.updateArticleStatus(
     id,
     {
@@ -274,6 +295,10 @@ contentRoutes.patch('/articles/:id/status', async (c) => {
 });
 
 contentRoutes.delete('/articles/:id', async (c) => {
+  const ctx = getCtx(c);
+  if (!canPublishContent(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para eliminar artículos.');
+  }
   const id = c.req.param('id');
   if (!isValidUuid(id)) {
     return c.json(
@@ -281,7 +306,6 @@ contentRoutes.delete('/articles/:id', async (c) => {
       422,
     );
   }
-  const ctx = getCtx(c);
   await contentClient.deleteArticle(id, ctx);
 
   telemetryClient.emitAuditEventAsync(
@@ -310,6 +334,10 @@ contentRoutes.get('/articles/:id/revisions', async (c) => {
 });
 
 contentRoutes.post('/articles/:id/revisions/:revisionId/restore', async (c) => {
+  const ctx = getCtx(c);
+  if (!canPublishContent(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para restaurar revisiones.');
+  }
   const id = c.req.param('id');
   const revisionId = c.req.param('revisionId');
   if (!isValidUuid(id) || !isValidUuid(revisionId)) {
@@ -318,7 +346,6 @@ contentRoutes.post('/articles/:id/revisions/:revisionId/restore', async (c) => {
       422,
     );
   }
-  const ctx = getCtx(c);
   const article = await contentClient.restoreRevision(id, revisionId, ctx);
   return c.json({ success: true, data: article });
 });
@@ -347,6 +374,10 @@ contentRoutes.get('/categories', async (c) => {
 });
 
 contentRoutes.post('/categories', async (c) => {
+  const ctx = getCtx(c);
+  if (!canWriteContent(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para crear categorías editoriales.');
+  }
   const raw = await c.req.json().catch(() => null);
   const parsed = createCategorySchema.safeParse(raw);
   if (!parsed.success) {
@@ -360,12 +391,15 @@ contentRoutes.post('/categories', async (c) => {
       422,
     );
   }
-  const ctx = getCtx(c);
   const data = await contentClient.createCategory(parsed.data, ctx);
   return c.json({ success: true, data }, 201);
 });
 
 contentRoutes.patch('/categories/:id', async (c) => {
+  const ctx = getCtx(c);
+  if (!canWriteContent(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para editar categorías editoriales.');
+  }
   const id = c.req.param('id');
   if (!isValidUuid(id)) {
     return c.json(
@@ -386,12 +420,15 @@ contentRoutes.patch('/categories/:id', async (c) => {
       422,
     );
   }
-  const ctx = getCtx(c);
   const data = await contentClient.updateCategory(id, parsed.data, ctx);
   return c.json({ success: true, data });
 });
 
 contentRoutes.delete('/categories/:id', async (c) => {
+  const ctx = getCtx(c);
+  if (!canWriteContent(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para eliminar categorías editoriales.');
+  }
   const id = c.req.param('id');
   if (!isValidUuid(id)) {
     return c.json(
@@ -399,7 +436,6 @@ contentRoutes.delete('/categories/:id', async (c) => {
       422,
     );
   }
-  const ctx = getCtx(c);
   await contentClient.deleteCategory(id, ctx);
   return c.json({ success: true });
 });
@@ -411,6 +447,10 @@ contentRoutes.get('/tags', async (c) => {
 });
 
 contentRoutes.post('/tags', async (c) => {
+  const ctx = getCtx(c);
+  if (!canWriteContent(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para crear etiquetas.');
+  }
   const raw = await c.req.json().catch(() => null);
   const parsed = createTagSchema.safeParse(raw);
   if (!parsed.success) {
@@ -424,12 +464,15 @@ contentRoutes.post('/tags', async (c) => {
       422,
     );
   }
-  const ctx = getCtx(c);
   const data = await contentClient.createTag(parsed.data, ctx);
   return c.json({ success: true, data }, 201);
 });
 
 contentRoutes.delete('/tags/:id', async (c) => {
+  const ctx = getCtx(c);
+  if (!canWriteContent(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para eliminar etiquetas.');
+  }
   const id = c.req.param('id');
   if (!isValidUuid(id)) {
     return c.json(
@@ -437,7 +480,6 @@ contentRoutes.delete('/tags/:id', async (c) => {
       422,
     );
   }
-  const ctx = getCtx(c);
   await contentClient.deleteTag(id, ctx);
   return c.json({ success: true });
 });
@@ -448,11 +490,18 @@ contentRoutes.delete('/tags/:id', async (c) => {
 
 contentRoutes.get('/webhooks', async (c) => {
   const ctx = getCtx(c);
+  if (!canPublishContent(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para ver los Deploy Hooks.');
+  }
   const data = await contentClient.listWebhooks(ctx);
   return c.json({ success: true, data });
 });
 
 contentRoutes.post('/webhooks', async (c) => {
+  const ctx = getCtx(c);
+  if (!canPublishContent(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para crear Deploy Hooks.');
+  }
   const raw = await c.req.json().catch(() => null);
   const parsed = createWebhookSchema.safeParse(raw);
   if (!parsed.success) {
@@ -466,12 +515,15 @@ contentRoutes.post('/webhooks', async (c) => {
       422,
     );
   }
-  const ctx = getCtx(c);
   const data = await contentClient.createWebhook(parsed.data, ctx);
   return c.json({ success: true, data }, 201);
 });
 
 contentRoutes.patch('/webhooks/:id', async (c) => {
+  const ctx = getCtx(c);
+  if (!canPublishContent(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para editar Deploy Hooks.');
+  }
   const id = c.req.param('id');
   if (!isValidUuid(id)) {
     return c.json(
@@ -492,12 +544,15 @@ contentRoutes.patch('/webhooks/:id', async (c) => {
       422,
     );
   }
-  const ctx = getCtx(c);
   const data = await contentClient.updateWebhook(id, parsed.data, ctx);
   return c.json({ success: true, data });
 });
 
 contentRoutes.delete('/webhooks/:id', async (c) => {
+  const ctx = getCtx(c);
+  if (!canPublishContent(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para eliminar Deploy Hooks.');
+  }
   const id = c.req.param('id');
   if (!isValidUuid(id)) {
     return c.json(
@@ -505,12 +560,15 @@ contentRoutes.delete('/webhooks/:id', async (c) => {
       422,
     );
   }
-  const ctx = getCtx(c);
   await contentClient.deleteWebhook(id, ctx);
   return c.json({ success: true });
 });
 
 contentRoutes.post('/webhooks/:id/test', async (c) => {
+  const ctx = getCtx(c);
+  if (!canPublishContent(ctx.roles)) {
+    return forbiddenResponse(c, 'No tienes permisos para probar Deploy Hooks.');
+  }
   const id = c.req.param('id');
   if (!isValidUuid(id)) {
     return c.json(
@@ -518,7 +576,6 @@ contentRoutes.post('/webhooks/:id/test', async (c) => {
       422,
     );
   }
-  const ctx = getCtx(c);
   const data = await contentClient.testWebhook(id, ctx);
   return c.json({ success: true, data });
 });

@@ -76,14 +76,45 @@ export function registerUnauthorizedHandler(handler: UnauthorizedHandler | null)
   };
 }
 
+function humanizeErrorMessage(status: number, rawMessage?: string): string {
+  const trimmed = rawMessage?.trim();
+  const isTechnicalOrEmpty =
+    !trimmed ||
+    /^Error HTTP \d+$/i.test(trimmed) ||
+    /^(Forbidden|Unauthorized|Bad Request|Internal Server Error|Not Found|Bad Gateway|Service Unavailable|Gateway Timeout)$/i.test(
+      trimmed,
+    );
+
+  if (!isTechnicalOrEmpty) {
+    return trimmed;
+  }
+
+  switch (status) {
+    case 400:
+      return 'La solicitud contiene datos inválidos. Revisa los campos e intenta nuevamente.';
+    case 401:
+      return 'Tu sesión ha expirado. Inicia sesión nuevamente.';
+    case 403:
+      return 'No tienes permisos para realizar esta acción.';
+    case 404:
+      return 'El recurso solicitado no existe o ya fue eliminado.';
+    case 409:
+      return 'Existe un conflicto con el estado actual del registro.';
+    case 422:
+      return 'Algunos campos no son válidos. Revisa el formulario e intenta nuevamente.';
+    case 503:
+    case 504:
+      return 'El servicio está temporalmente no disponible. Intenta nuevamente en unos segundos.';
+    default:
+      return status >= 500
+        ? 'Ocurrió un error inesperado en el servidor. Intenta nuevamente.'
+        : 'No se pudo completar la operación.';
+  }
+}
+
 function notifyIfHandledStatus(error: BffApiError, silent?: boolean): void {
   if (silent || !globalErrorNotifier) return;
-  if (
-    error.status === 0 ||
-    error.status === 403 ||
-    error.status === 409 ||
-    error.status === 422
-  ) {
+  if (error.status !== 401) {
     error.notified = true;
     globalErrorNotifier(error);
   }
@@ -145,9 +176,10 @@ async function request<T>(
   }
 
   if (!res.ok) {
+    const rawMsg = typeof data?.message === 'string' ? data.message : undefined;
     const apiErr = new BffApiError(
       res.status,
-      typeof data?.message === 'string' ? data.message : `Error HTTP ${res.status}`,
+      humanizeErrorMessage(res.status, rawMsg),
       typeof data?.code === 'string' ? data.code : undefined,
       data?.details ?? data?.errors,
     );

@@ -1,5 +1,6 @@
 import { Building2, ChevronDown, LogOut, Menu, Moon, Settings, Sun } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { usePermissions } from '../auth/permissions';
 import { useTheme } from '../context/ThemeProvider';
 import type { AuthUser } from '../types/api';
 import { Button, StatusBadge } from '../ui';
@@ -22,11 +23,6 @@ function getUserInitials(name: string, email: string): string {
   return source.slice(0, 2).toUpperCase();
 }
 
-function getHumanRole(roles: string[]): string {
-  const isAdmin = roles.some((r) => r === 'tenant:admin' || r === 'platform:admin');
-  return isAdmin ? 'Administrador' : 'Colaborador';
-}
-
 export function Topbar({
   active,
   user,
@@ -35,12 +31,14 @@ export function Topbar({
   onOpenMobileMenu,
 }: TopbarProps) {
   const { settings, tenantMeta, resolvedTheme, toggleTheme } = useTheme();
+  const { isAdmin, can } = usePermissions(user);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   const activeItem = NAV_ITEMS.find((item) => item.id === active);
   const tenantLabel = tenantMeta?.name || settings.branding.displayName || 'Kropy';
-  const roleLabel = getHumanRole(user.roles);
+  const roleLabel = isAdmin ? 'Administrador' : 'Colaborador';
+  const canOpenSettings = can('settings:read');
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -116,18 +114,20 @@ export function Topbar({
               </div>
 
               <div className="stack-xs">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  block
-                  icon={<Settings size={14} />}
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onSelect('settings');
-                  }}
-                >
-                  Ajustes
-                </Button>
+                {canOpenSettings && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    block
+                    icon={<Settings size={14} />}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onSelect('settings');
+                    }}
+                  >
+                    Ajustes
+                  </Button>
+                )}
                 <Button
                   variant="secondary"
                   size="sm"

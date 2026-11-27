@@ -110,11 +110,24 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           title: 'Conflicto detectado',
           duration: 4500,
         });
-      } else if (err.status === 422) {
+      } else if (err.status === 400 || err.status === 422) {
         toast.error(err.message || 'Revisa los datos ingresados e intenta nuevamente.', {
           title: 'Datos inválidos',
           duration: 4500,
         });
+      } else if (err.status === 404) {
+        toast.warning(err.message || 'El recurso solicitado no fue encontrado.', {
+          title: 'No encontrado',
+          duration: 4000,
+        });
+      } else if (err.status >= 500) {
+        toast.error(
+          err.message || 'Ocurrió un problema en el servidor. Intenta nuevamente en unos segundos.',
+          {
+            title: 'Error del servidor',
+            duration: 5000,
+          },
+        );
       }
     });
 

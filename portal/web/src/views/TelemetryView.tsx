@@ -71,6 +71,13 @@ const HUMAN_EVENT_NAMES: Record<string, string> = {
   'user.deleted': 'Miembro eliminado',
   'api_key.created': 'Clave de integración creada',
   'api_key.revoked': 'Clave de integración revocada',
+  'content.article.published': 'Artículo publicado',
+  'content.article.scheduled': 'Artículo programado',
+  'content.article.archived': 'Artículo archivado',
+  'content.article.status_changed': 'Estado de artículo actualizado',
+  'content.article.deleted': 'Artículo eliminado',
+  'media.asset.uploaded': 'Archivo multimedia subido',
+  'media.asset.purged': 'Archivo multimedia eliminado definitivamente',
 };
 
 function formatEventName(name: string): string {
