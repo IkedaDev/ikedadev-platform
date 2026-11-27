@@ -86,7 +86,7 @@ export const telemetryClient = {
   ): Promise<PaginatedApiResponse<TelemetryEvent>> {
     return http.request<PaginatedApiResponse<TelemetryEvent>>(
       'GET',
-      `/v1/clients/${clientId}/timeline`,
+      `/v1/clients/${encodeURIComponent(clientId)}/timeline`,
       {
         query: params,
         ctx,

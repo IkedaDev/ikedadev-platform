@@ -261,6 +261,16 @@ impl BookingRepository for SqlxBookingRepository {
         let mut tx = begin_tenant_tx(&self.pool, tenant_id).await?;
 
         if let Some((idem_key, req_hash, _)) = idempotency {
+            // Serialize concurrent identical retries for the same (tenant_id, idempotency_key)
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text || ':' || $2, 0))")
+                .bind(tenant_id)
+                .bind(idem_key)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| {
+                    AppError::DatabaseError(format!("Failed to acquire idempotency lock: {e}"))
+                })?;
+
             let existing = sqlx::query_as::<_, IdempotencyRow>(
                 r#"
                 SELECT request_hash, response_status, response_body, expires_at
@@ -438,11 +448,12 @@ impl BookingRepository for SqlxBookingRepository {
         &self,
         tenant_id: Uuid,
         booking: &Booking,
+        expected_status: BookingStatus,
         replace_items: bool,
     ) -> Result<Booking, AppError> {
         let mut tx = begin_tenant_tx(&self.pool, tenant_id).await?;
 
-        let row = sqlx::query_as::<_, BookingRow>(
+        let maybe_row = sqlx::query_as::<_, BookingRow>(
             r#"
             UPDATE bookings
             SET calendar_id = $1, event_id = $2, starts_at = $3, ends_at = $4,
@@ -450,7 +461,7 @@ impl BookingRepository for SqlxBookingRepository {
                 total_price = $9, total_duration_minutes = $10, notes = $11,
                 cancellation_reason = $12, cancelled_at = $13, completed_at = $14,
                 metadata = $15, updated_by = $16, updated_at = NOW()
-            WHERE id = $17 AND tenant_id = $18 AND deleted_at IS NULL
+            WHERE id = $17 AND tenant_id = $18 AND status = $19 AND deleted_at IS NULL
             RETURNING id, tenant_id, booking_code, client_id, calendar_id, event_id,
                       starts_at, ends_at, timezone, status,
                       subtotal, tax_total, total_price, total_duration_minutes, currency,
@@ -476,10 +487,38 @@ impl BookingRepository for SqlxBookingRepository {
         .bind(booking.updated_by)
         .bind(booking.id)
         .bind(tenant_id)
+        .bind(expected_status.as_str())
         .fetch_optional(&mut *tx)
         .await
-        .map_err(|e| map_booking_write_err("Failed to update booking", e))?
-        .ok_or_else(|| AppError::NotFound(format!("Booking with ID '{}' not found", booking.id)))?;
+        .map_err(|e| map_booking_write_err("Failed to update booking", e))?;
+
+        let row = match maybe_row {
+            Some(r) => r,
+            None => {
+                let current_status: Option<String> = sqlx::query_scalar(
+                    "SELECT status FROM bookings WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL",
+                )
+                .bind(booking.id)
+                .bind(tenant_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| {
+                    AppError::DatabaseError(format!("Failed to check booking status: {e}"))
+                })?;
+
+                if let Some(actual) = current_status {
+                    return Err(AppError::Conflict(format!(
+                        "Booking '{}' status changed concurrently (expected {}, found {actual})",
+                        booking.id,
+                        expected_status.as_str()
+                    )));
+                }
+                return Err(AppError::NotFound(format!(
+                    "Booking with ID '{}' not found",
+                    booking.id
+                )));
+            }
+        };
 
         let updated = if replace_items {
             sqlx::query("DELETE FROM booking_items WHERE tenant_id = $1 AND booking_id = $2")

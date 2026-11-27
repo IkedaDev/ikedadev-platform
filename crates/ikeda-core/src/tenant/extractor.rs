@@ -49,12 +49,15 @@ where
                         "API key is bound to an invalid nil tenant ID".to_string(),
                     ));
                 }
-                return Ok(Self {
+                let ctx = Self {
                     tenant_id: auth_key.tenant_id,
                     user_id: None,
                     scopes: auth_key.scopes,
                     auth_source: AuthSource::ApiKey,
-                });
+                };
+                tracing::Span::current()
+                    .record("tenant_id", tracing::field::display(ctx.tenant_id));
+                return Ok(ctx);
             }
 
             return Err(AppError::Unauthorized(
@@ -86,12 +89,15 @@ where
                 };
 
                 let user = validator.validate_token(token).await?;
-                return Ok(Self {
+                let ctx = Self {
                     tenant_id: user.tenant_id,
                     user_id: Some(user.user_id),
                     scopes: user.scopes,
                     auth_source: AuthSource::Jwt,
-                });
+                };
+                tracing::Span::current()
+                    .record("tenant_id", tracing::field::display(ctx.tenant_id));
+                return Ok(ctx);
             }
 
             return Err(AppError::Unauthorized(
@@ -146,12 +152,15 @@ where
                     Vec::new()
                 };
 
-                return Ok(Self {
+                let ctx = Self {
                     tenant_id,
                     user_id,
                     scopes,
                     auth_source: AuthSource::DevHeaders,
-                });
+                };
+                tracing::Span::current()
+                    .record("tenant_id", tracing::field::display(ctx.tenant_id));
+                return Ok(ctx);
             }
         }
 

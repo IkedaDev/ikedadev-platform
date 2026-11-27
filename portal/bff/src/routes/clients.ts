@@ -19,6 +19,8 @@ const updateClientSchema = createClientSchema.partial();
 
 import { getAuthRequestContext as getCtx } from '../middleware/auth.js';
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export const clientsRoutes = new Hono();
 
 // POST /api/clients/search
@@ -32,7 +34,7 @@ clientsRoutes.post('/search', async (c) => {
 // POST /api/clients
 clientsRoutes.post('/', async (c) => {
   const ctx = getCtx(c);
-  const raw = await c.req.json();
+  const raw = await c.req.json().catch(() => null);
   const parsed = createClientSchema.safeParse(raw);
   if (!parsed.success) {
     return c.json(
@@ -72,7 +74,17 @@ clientsRoutes.post('/', async (c) => {
 clientsRoutes.patch('/:id', async (c) => {
   const ctx = getCtx(c);
   const id = c.req.param('id');
-  const raw = await c.req.json();
+  if (!UUID_REGEX.test(id)) {
+    return c.json(
+      {
+        success: false,
+        code: 'VALIDATION_ERROR',
+        message: 'id debe ser un UUID válido',
+      },
+      422,
+    );
+  }
+  const raw = await c.req.json().catch(() => null);
   const parsed = updateClientSchema.safeParse(raw);
   if (!parsed.success) {
     return c.json(
@@ -107,6 +119,16 @@ clientsRoutes.patch('/:id', async (c) => {
 clientsRoutes.delete('/:id', async (c) => {
   const ctx = getCtx(c);
   const id = c.req.param('id');
+  if (!UUID_REGEX.test(id)) {
+    return c.json(
+      {
+        success: false,
+        code: 'VALIDATION_ERROR',
+        message: 'id debe ser un UUID válido',
+      },
+      422,
+    );
+  }
   await crmClient.deleteClient(id, ctx);
   telemetryClient.emitAuditEventAsync(
     {

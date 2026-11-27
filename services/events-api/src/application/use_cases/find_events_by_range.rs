@@ -44,16 +44,25 @@ impl FindEventsByRangeUseCase {
                 .await?
         };
 
+        let recurring_ids: Vec<Uuid> = events
+            .iter()
+            .filter(|e| e.is_recurring())
+            .map(|e| e.id)
+            .collect();
+        let exceptions_map = self
+            .event_repo
+            .find_exceptions_batch(tenant_id, &recurring_ids)
+            .await?;
+
         let mut instances = Vec::new();
 
         for event in &events {
-            let exceptions = if event.is_recurring() {
-                self.event_repo.find_exceptions(tenant_id, event.id).await?
-            } else {
-                Vec::new()
-            };
+            let exceptions = exceptions_map
+                .get(&event.id)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
 
-            let expanded = expand_recurrence(event, &query.range, &exceptions)?;
+            let expanded = expand_recurrence(event, &query.range, exceptions)?;
             instances.extend(expanded);
         }
 

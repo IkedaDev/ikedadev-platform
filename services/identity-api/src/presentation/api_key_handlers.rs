@@ -28,22 +28,34 @@ fn require_tenant_or_platform_admin(ctx: &TenantContext) -> Result<(), AppError>
     }
 }
 
-fn reject_privileged_scope_escalation(
-    ctx: &TenantContext,
-    scopes: &[String],
-) -> Result<(), AppError> {
-    if ctx.has_scope(SCOPE_PLATFORM_ADMIN) {
-        return Ok(());
-    }
-    let escalates = scopes.iter().any(|s| {
-        let trimmed = s.trim();
-        trimmed == SCOPE_PLATFORM_ADMIN || trimmed == "*"
-    });
-    if escalates {
-        return Err(AppError::Forbidden(
-            "Cannot mint an API key with 'platform:admin' or wildcard scopes without 'platform:admin' scope"
-                .to_string(),
-        ));
+fn is_valid_scope_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b':' | b'_' | b'-'))
+}
+
+fn validate_and_authorize_scopes(ctx: &TenantContext, scopes: &[String]) -> Result<(), AppError> {
+    let is_platform_admin = ctx.has_scope(SCOPE_PLATFORM_ADMIN);
+    for scope in scopes {
+        let trimmed = scope.trim();
+        if !is_platform_admin
+            && (trimmed.eq_ignore_ascii_case(SCOPE_PLATFORM_ADMIN) || trimmed == "*")
+        {
+            return Err(AppError::Forbidden(
+                "Cannot mint an API key with 'platform:admin' or wildcard scopes without 'platform:admin' scope"
+                    .to_string(),
+            ));
+        }
+        if trimmed == "*" && is_platform_admin {
+            continue;
+        }
+        if !is_valid_scope_identifier(trimmed) {
+            return Err(AppError::BadRequest(format!(
+                "Invalid scope identifier '{scope}': must be 1..=64 ASCII characters matching [a-zA-Z0-9:_-]"
+            )));
+        }
     }
     Ok(())
 }
@@ -67,7 +79,7 @@ pub async fn create_api_key(
     Json(cmd): Json<CreateApiKeyCommand>,
 ) -> Result<impl IntoResponse, AppError> {
     require_tenant_or_platform_admin(&ctx)?;
-    reject_privileged_scope_escalation(&ctx, &cmd.scopes)?;
+    validate_and_authorize_scopes(&ctx, &cmd.scopes)?;
     let use_case = CreateApiKeyUseCase::new(state.api_key_repo.clone());
     let created = use_case.execute(ctx.tenant_id, cmd).await?;
     Ok((

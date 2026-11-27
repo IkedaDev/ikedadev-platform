@@ -7,6 +7,7 @@ use crate::application::use_cases::{
 };
 use crate::domain::models::{ApiKeySummary, CreatedApiKey, Tenant, TenantUser};
 use axum::{
+    extract::DefaultBodyLimit,
     routing::{delete, get, post},
     Router,
 };
@@ -103,5 +104,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/users/{id}", delete(delete_user))
         // Swagger UI
         .merge(SwaggerUi::new("/swagger-ui").url("/openapi.json", ApiDoc::openapi()))
+        .layer(DefaultBodyLimit::max(256 * 1024))
         .with_state(state)
 }

@@ -5,6 +5,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -38,6 +39,7 @@ interface ModalEntry extends OpenModalOptions {
 export interface ModalContextValue {
   openModal: (options: OpenModalOptions) => string;
   closeModal: (id?: string) => void;
+  clearModals: () => void;
   confirm: (options: ConfirmOptions) => Promise<boolean>;
   hasOpenModal: boolean;
 }
@@ -46,24 +48,43 @@ const ModalContext = createContext<ModalContextValue | null>(null);
 
 export function ModalProvider({ children }: { children: ReactNode }) {
   const [stack, setStack] = useState<ModalEntry[]>([]);
+  const stackRef = useRef<ModalEntry[]>([]);
+  const backdropMouseDownIdRef = useRef<string | null>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const topPanelRef = useRef<HTMLDivElement | null>(null);
+
+  stackRef.current = stack;
 
   const closeModal = useCallback((id?: string) => {
-    setStack((prev) => {
-      if (prev.length === 0) return prev;
-      if (id) {
-        const target = prev.find((m) => m.id === id);
-        target?.onDismiss?.();
-        return prev.filter((m) => m.id !== id);
-      }
-      const last = prev[prev.length - 1];
-      last?.onDismiss?.();
-      return prev.slice(0, -1);
-    });
+    const current = stackRef.current;
+    if (current.length === 0) return;
+
+    const target = id ? current.find((m) => m.id === id) : current[current.length - 1];
+    if (!target) return;
+
+    const next = id ? current.filter((m) => m.id !== id) : current.slice(0, -1);
+    stackRef.current = next;
+    setStack(next);
+    target.onDismiss?.();
+  }, []);
+
+  const clearModals = useCallback(() => {
+    const current = stackRef.current;
+    if (current.length === 0) return;
+    stackRef.current = [];
+    setStack([]);
+    for (const entry of current) {
+      entry.onDismiss?.();
+    }
   }, []);
 
   const openModal = useCallback((options: OpenModalOptions): string => {
     const id = `modal_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    setStack((prev) => [...prev, { ...options, id }]);
+    setStack((prev) => {
+      const next = [...prev, { ...options, id }];
+      stackRef.current = next;
+      return next;
+    });
     return id;
   }, []);
 
@@ -75,7 +96,11 @@ export function ModalProvider({ children }: { children: ReactNode }) {
       const finish = (result: boolean) => {
         if (settled) return;
         settled = true;
-        setStack((prev) => prev.filter((m) => m.id !== id));
+        setStack((prev) => {
+          const next = prev.filter((m) => m.id !== id);
+          stackRef.current = next;
+          return next;
+        });
         resolve(result);
       };
 
@@ -106,11 +131,27 @@ export function ModalProvider({ children }: { children: ReactNode }) {
         ),
       };
 
-      setStack((prev) => [...prev, entry]);
+      setStack((prev) => {
+        const next = [...prev, entry];
+        stackRef.current = next;
+        return next;
+      });
     });
   }, []);
 
   useBodyScrollLock(stack.length > 0);
+
+  useEffect(() => {
+    if (stack.length > 0) {
+      if (!previousFocusRef.current && document.activeElement instanceof HTMLElement) {
+        previousFocusRef.current = document.activeElement;
+      }
+      topPanelRef.current?.focus();
+    } else if (previousFocusRef.current) {
+      previousFocusRef.current.focus();
+      previousFocusRef.current = null;
+    }
+  }, [stack.length]);
 
   useEffect(() => {
     if (stack.length === 0) return;
@@ -125,8 +166,8 @@ export function ModalProvider({ children }: { children: ReactNode }) {
   }, [stack.length, closeModal]);
 
   const value = useMemo<ModalContextValue>(
-    () => ({ openModal, closeModal, confirm, hasOpenModal: stack.length > 0 }),
-    [openModal, closeModal, confirm, stack.length],
+    () => ({ openModal, closeModal, clearModals, confirm, hasOpenModal: stack.length > 0 }),
+    [openModal, closeModal, clearModals, confirm, stack.length],
   );
 
   return (
@@ -137,13 +178,20 @@ export function ModalProvider({ children }: { children: ReactNode }) {
           key={modal.id}
           className="modal-backdrop"
           style={{ zIndex: 200 + index * 10 }}
-          onClick={() => {
-            if (modal.closeOnBackdrop !== false) {
+          onMouseDown={(e) => {
+            backdropMouseDownIdRef.current = e.target === e.currentTarget ? modal.id : null;
+          }}
+          onClick={(e) => {
+            const startedOnBackdrop = backdropMouseDownIdRef.current === modal.id;
+            backdropMouseDownIdRef.current = null;
+            if (startedOnBackdrop && e.target === e.currentTarget && modal.closeOnBackdrop !== false) {
               closeModal(modal.id);
             }
           }}
         >
           <div
+            ref={index === stack.length - 1 ? topPanelRef : undefined}
+            tabIndex={-1}
             className={`modal-panel modal-${modal.size ?? 'md'}`}
             role="dialog"
             aria-modal="true"

@@ -538,16 +538,16 @@ impl CatalogItemRepository for SqlxCatalogItemRepository {
             AppError::NotFound(format!("Catalog item with ID '{}' not found", item.id))
         })?;
 
-        if let ItemDetails::Bundle { ref items } = item.details {
-            sqlx::query("DELETE FROM bundle_items WHERE tenant_id = $1 AND bundle_id = $2")
-                .bind(tenant_id)
-                .bind(item.id)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| {
-                    AppError::DatabaseError(format!("Failed to replace bundle components: {e}"))
-                })?;
+        sqlx::query("DELETE FROM bundle_items WHERE tenant_id = $1 AND bundle_id = $2")
+            .bind(tenant_id)
+            .bind(item.id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| {
+                AppError::DatabaseError(format!("Failed to clean up bundle components: {e}"))
+            })?;
 
+        if let ItemDetails::Bundle { ref items } = item.details {
             for comp in items {
                 sqlx::query(
                     r#"

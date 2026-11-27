@@ -9,7 +9,7 @@
 //!     .layer(request_id_layer());
 //! ```
 
-use crate::tenant::{TenantContext, HEADER_TENANT_ID};
+use crate::tenant::TenantContext;
 use http::{HeaderMap, HeaderName, Request, Response};
 use std::time::Duration;
 use tower::layer::util::Stack;
@@ -20,6 +20,9 @@ use tracing::Span;
 
 /// Canonical HTTP header used to correlate requests across services.
 pub const REQUEST_ID_HEADER: &str = "x-request-id";
+
+/// Maximum length recorded for incoming `X-Request-Id` values to prevent log bloat.
+pub const MAX_REQUEST_ID_LEN: usize = 128;
 
 /// Concrete Tower layer type combining `SetRequestIdLayer` and `PropagateRequestIdLayer`.
 pub type RequestIdLayer = Stack<PropagateRequestIdLayer, SetRequestIdLayer<MakeRequestUuid>>;
@@ -59,19 +62,24 @@ pub struct HttpMakeSpan {
 
 impl<B> MakeSpan<B> for HttpMakeSpan {
     fn make_span(&mut self, request: &Request<B>) -> Span {
-        let request_id = extract_header(request.headers(), REQUEST_ID_HEADER).unwrap_or("-");
-        let tenant_id = extract_tenant_id(request);
+        let request_id = extract_header(request.headers(), REQUEST_ID_HEADER)
+            .map(|v| truncate_str(v, MAX_REQUEST_ID_LEN))
+            .unwrap_or("-");
         let method = request.method().as_str();
         let path = request.uri().path();
 
-        tracing::info_span!(
+        let span = tracing::info_span!(
             "http_request",
             service = self.service_name,
             request_id = %request_id,
             method = %method,
             path = %path,
-            tenant_id = %tenant_id,
-        )
+            tenant_id = tracing::field::Empty,
+        );
+        if let Some(ctx) = request.extensions().get::<TenantContext>() {
+            span.record("tenant_id", tracing::field::display(ctx.tenant_id));
+        }
+        span
     }
 }
 
@@ -118,9 +126,9 @@ impl<B> OnResponse<B> for HttpOnResponse {
 /// Builds a reusable Tower/Axum HTTP tracing layer for a microservice.
 ///
 /// Logs `service`, `request_id`, `method`, `path`, `status`, `latency_ms`, and
-/// `tenant_id` (from request extensions [`TenantContext`] or `X-Tenant-Id`
-/// header). Sensitive headers (`Authorization`, `X-Api-Key`, `Cookie`) are
-/// never logged.
+/// verified `tenant_id` (populated only from authenticated [`TenantContext`],
+/// never from unverified `X-Tenant-Id` headers). Sensitive headers
+/// (`Authorization`, `X-Api-Key`, `Cookie`) are never logged.
 pub fn http_trace_layer(service_name: &'static str) -> HttpTraceLayer {
     TraceLayer::new_for_http()
         .make_span_with(HttpMakeSpan { service_name })
@@ -137,14 +145,15 @@ fn extract_header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
         .filter(|v| !v.is_empty())
 }
 
-fn extract_tenant_id<B>(request: &Request<B>) -> String {
-    if let Some(ctx) = request.extensions().get::<TenantContext>() {
-        return ctx.tenant_id.to_string();
+fn truncate_str(value: &str, max_bytes: usize) -> &str {
+    if value.len() <= max_bytes {
+        return value;
     }
-    if let Some(header_value) = extract_header(request.headers(), HEADER_TENANT_ID) {
-        return header_value.to_string();
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
     }
-    "-".to_string()
+    &value[..end]
 }
 
 #[cfg(test)]
@@ -253,7 +262,7 @@ mod tests {
                 .event_format(StructuredJsonFormat::new("test-api")),
         );
 
-        let tenant_id = Uuid::new_v4().to_string();
+        let spoofed_tenant_id = Uuid::new_v4().to_string();
         let secret_bearer = "Bearer super-secret-jwt-token-999";
         let secret_api_key = "ik_live_super_secret_api_key_888";
         let secret_cookie = "session_id=super_secret_cookie_777";
@@ -262,7 +271,7 @@ mod tests {
         let req = Request::builder()
             .uri("/health")
             .header(REQUEST_ID_HEADER, "req-safe-check")
-            .header(HEADER_TENANT_ID, &tenant_id)
+            .header(crate::tenant::HEADER_TENANT_ID, &spoofed_tenant_id)
             .header("authorization", secret_bearer)
             .header("x-api-key", secret_api_key)
             .header("cookie", secret_cookie)
@@ -288,6 +297,10 @@ mod tests {
             !output.contains(secret_cookie),
             "Cookie header value must never be logged"
         );
+        assert!(
+            !output.contains(&spoofed_tenant_id),
+            "Unverified X-Tenant-Id header must never be logged as tenant_id"
+        );
 
         let line = output.lines().last().expect("log line");
         let parsed: Value = serde_json::from_str(line).expect("valid json");
@@ -296,7 +309,56 @@ mod tests {
         assert_eq!(parsed["method"], "GET");
         assert_eq!(parsed["path"], "/health");
         assert_eq!(parsed["status"], 200);
-        assert_eq!(parsed["tenant_id"], tenant_id);
+        assert!(parsed.get("tenant_id").is_none());
         assert!(parsed["latency_ms"].as_u64().is_some());
+    }
+
+    #[tokio::test]
+    async fn caps_oversized_request_id_and_records_verified_tenant_id() {
+        let buffer = SharedBuffer::default();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(buffer.clone())
+                .fmt_fields(JsonFields::new())
+                .event_format(StructuredJsonFormat::new("test-api")),
+        );
+
+        let verified_tenant = Uuid::new_v4();
+        let spoofed_tenant = Uuid::new_v4();
+        let long_req_id = "x".repeat(256);
+
+        let app = Router::new()
+            .route(
+                "/authed",
+                get(move || async move {
+                    tracing::Span::current()
+                        .record("tenant_id", tracing::field::display(verified_tenant));
+                    StatusCode::OK
+                }),
+            )
+            .layer(http_trace_layer("test-api"))
+            .layer(request_id_layer());
+
+        let req = Request::builder()
+            .uri("/authed")
+            .header(REQUEST_ID_HEADER, &long_req_id)
+            .header(crate::tenant::HEADER_TENANT_ID, spoofed_tenant.to_string())
+            .body(Body::empty())
+            .expect("request");
+
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::OK);
+        drop(_guard);
+
+        let output = String::from_utf8(buffer.0.lock().expect("lock").clone()).expect("utf8");
+        let line = output.lines().last().expect("log line");
+        let parsed: Value = serde_json::from_str(line).expect("valid json");
+        assert_eq!(
+            parsed["request_id"].as_str().map(str::len),
+            Some(MAX_REQUEST_ID_LEN)
+        );
+        assert_eq!(parsed["tenant_id"], verified_tenant.to_string());
+        assert!(!output.contains(&spoofed_tenant.to_string()));
     }
 }

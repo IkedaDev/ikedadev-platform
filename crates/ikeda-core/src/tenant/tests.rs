@@ -668,3 +668,94 @@ async fn test_jwt_validator_rejects_nil_tenant_id() {
         other => panic!("expected Unauthorized, got {other:?}"),
     }
 }
+
+#[tokio::test]
+async fn test_jwt_validator_rejects_wrong_audience_when_configured() {
+    let keypair = TestRsaKeyPair::generate("aud-test-kid");
+    let issuer = "https://auth.ikedadev.com/realms/ikeda";
+    let config = JwksConfig::new("", issuer).with_audience("ikeda-apis");
+    let validator = JwksJwtValidator::with_static_jwks(config, keypair.jwk_set.clone())
+        .expect("validator init failed");
+
+    let token = keypair.sign(&json!({
+        "iss": issuer,
+        "aud": "other-client",
+        "sub": Uuid::new_v4().to_string(),
+        "tenant_id": Uuid::new_v4().to_string(),
+        "exp": (Utc::now() + chrono::Duration::minutes(10)).timestamp(),
+    }));
+
+    let err = validator
+        .validate_token(&token)
+        .await
+        .expect_err("must reject JWT with mismatched audience");
+
+    assert!(matches!(err, AppError::Unauthorized(_)));
+}
+
+#[tokio::test]
+async fn test_jwks_unknown_kid_respects_refresh_cooldown() {
+    use axum::{routing::get, Router};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    let keypair = TestRsaKeyPair::generate("real-kid-1");
+    let jwks_json = serde_json::to_string(&keypair.jwk_set).expect("serialize jwks");
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hits_handler = hits.clone();
+
+    let app = Router::new().route(
+        "/certs",
+        get(move || {
+            let body = jwks_json.clone();
+            let counter = hits_handler.clone();
+            async move {
+                counter.fetch_add(1, Ordering::SeqCst);
+                (
+                    [(axum::http::header::CONTENT_TYPE, "application/json")],
+                    body,
+                )
+            }
+        }),
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock jwks listener");
+    let addr = listener.local_addr().expect("local addr");
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    let issuer = "https://auth.ikedadev.com/realms/ikeda";
+    let config = JwksConfig::new(format!("http://{addr}/certs"), issuer)
+        .with_refresh_cooldown(Duration::from_secs(10));
+    let validator = JwksJwtValidator::new(config).expect("validator init failed");
+
+    // Send 15 rapid tokens with distinct unknown `kid`s
+    for i in 0..15 {
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some(format!("unknown-kid-{i}"));
+        let token = encode(
+            &header,
+            &json!({
+                "iss": issuer,
+                "sub": Uuid::new_v4().to_string(),
+                "tenant_id": Uuid::new_v4().to_string(),
+                "exp": (Utc::now() + chrono::Duration::minutes(10)).timestamp(),
+            }),
+            &keypair.encoding_key,
+        )
+        .expect("sign token");
+
+        let err = validator
+            .validate_token(&token)
+            .await
+            .expect_err("unknown kid must be rejected");
+        assert!(matches!(err, AppError::Unauthorized(_)));
+    }
+
+    // First unknown kid triggered initial fetch; subsequent 14 must be suppressed by cooldown
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    server.abort();
+}

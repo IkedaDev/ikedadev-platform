@@ -19,6 +19,34 @@ use ikeda_core::response::{ApiResponse, PaginatedApiResponse};
 use ikeda_core::tenant::TenantContext;
 use uuid::Uuid;
 
+fn require_telemetry_write(ctx: &TenantContext) -> Result<(), AppError> {
+    if ctx.has_scope("telemetry:write")
+        || ctx.has_scope("tenant:admin")
+        || ctx.has_scope("platform:admin")
+    {
+        Ok(())
+    } else {
+        Err(AppError::Forbidden(
+            "Missing required scope: 'telemetry:write', 'tenant:admin', or 'platform:admin'"
+                .to_string(),
+        ))
+    }
+}
+
+fn require_telemetry_read(ctx: &TenantContext) -> Result<(), AppError> {
+    if ctx.has_scope("telemetry:read")
+        || ctx.has_scope("tenant:admin")
+        || ctx.has_scope("platform:admin")
+    {
+        Ok(())
+    } else {
+        Err(AppError::Forbidden(
+            "Missing required scope: 'telemetry:read', 'tenant:admin', or 'platform:admin'"
+                .to_string(),
+        ))
+    }
+}
+
 fn extract_request_id(headers: &HeaderMap) -> Option<String> {
     headers
         .get(REQUEST_ID_HEADER)
@@ -63,6 +91,7 @@ pub async fn ingest_event(
     headers: HeaderMap,
     Json(cmd): Json<IngestEventCommand>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_telemetry_write(&tenant)?;
     let request_id = extract_request_id(&headers);
     let uc = IngestEventUseCase::new(state.event_repo.clone());
     let event = uc
@@ -90,6 +119,7 @@ pub async fn ingest_batch_events(
     headers: HeaderMap,
     Json(cmd): Json<IngestBatchCommand>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_telemetry_write(&tenant)?;
     let request_id = extract_request_id(&headers);
     let uc = IngestBatchEventsUseCase::new(state.event_repo.clone());
     let result = uc
@@ -118,6 +148,7 @@ pub async fn search_events(
     tenant: TenantContext,
     Json(criteria): Json<Criteria>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_telemetry_read(&tenant)?;
     let uc = SearchEventsUseCase::new(state.event_repo.clone());
     let response = uc.execute(tenant.tenant_id, criteria).await?;
     Ok(Json(response))
@@ -143,6 +174,7 @@ pub async fn get_client_timeline(
     Path(client_id): Path<Uuid>,
     Query(params): Query<ClientTimelineQueryParams>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_telemetry_read(&tenant)?;
     let uc = GetClientTimelineUseCase::new(state.event_repo.clone());
     let response = uc
         .execute(
@@ -173,6 +205,7 @@ pub async fn get_metrics_summary(
     tenant: TenantContext,
     Json(cmd): Json<GetMetricsCommand>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_telemetry_read(&tenant)?;
     let uc = GetMetricsUseCase::new(state.event_repo.clone());
     let metrics = uc.execute(tenant.tenant_id, cmd).await?;
     Ok(Json(ApiResponse::ok(metrics)))

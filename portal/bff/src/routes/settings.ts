@@ -18,6 +18,16 @@ import type {
 const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
+const SLUG_BRANDING_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+export const SLUG_BRANDING_CACHE_MAX_SIZE = 1_000;
+
+export function isSafeLogoUrl(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed === '') return true;
+  if (/^https?:\/\/.+/.test(trimmed)) return true;
+  if (/^\/(?!\/)/.test(trimmed)) return true;
+  return false;
+}
 
 function isValidTenantUuid(value: string | undefined): value is string {
   return typeof value === 'string' && UUID_REGEX.test(value) && value !== NIL_UUID;
@@ -67,7 +77,7 @@ const brandingPatchSchema = z.object({
     .trim()
     .max(500, 'La URL del logo es demasiado larga')
     .refine(
-      (v) => v === '' || /^https?:\/\/.+/.test(v) || v.startsWith('/'),
+      (v) => isSafeLogoUrl(v),
       'logoUrl debe estar vacío o ser una URL válida (http/https o ruta relativa)',
     )
     .optional(),
@@ -116,8 +126,21 @@ const patchSettingsSchema = z
     },
   );
 
-// In-memory public branding cache keyed by normalized tenant slug
-const slugBrandingCache = new Map<string, TenantBrandingSettings>();
+interface CachedBrandingEntry {
+  branding: TenantBrandingSettings;
+  expiresAt: number;
+}
+
+// In-memory public branding cache keyed by normalized tenant slug (bounded + TTL)
+const slugBrandingCache = new Map<string, CachedBrandingEntry>();
+
+export function clearSlugBrandingCacheForTest(): void {
+  slugBrandingCache.clear();
+}
+
+export function getSlugBrandingCacheSize(): number {
+  return slugBrandingCache.size;
+}
 
 function normalizeSlug(slug: string): string {
   return slug.trim().toLowerCase();
@@ -151,7 +174,7 @@ function mergeTenantConfigWithDefaults(rawConfig: unknown): TenantSettings {
         ? rawBranding.displayName.trim()
         : DEFAULT_TENANT_SETTINGS.branding.displayName,
     logoUrl:
-      typeof rawBranding.logoUrl === 'string'
+      typeof rawBranding.logoUrl === 'string' && isSafeLogoUrl(rawBranding.logoUrl)
         ? rawBranding.logoUrl.trim()
         : DEFAULT_TENANT_SETTINGS.branding.logoUrl,
     primaryColor:
@@ -214,11 +237,38 @@ function hasSettingsAdminRole(roles: string[] | undefined): boolean {
   return roles.includes('tenant:admin') || roles.includes('platform:admin');
 }
 
-function cacheTenantBranding(slug: string, branding: TenantBrandingSettings): void {
+export function cacheTenantBranding(
+  slug: string,
+  branding: TenantBrandingSettings,
+  options?: { now?: number; ttlMs?: number; maxSize?: number },
+): void {
   const normalized = normalizeSlug(slug);
-  if (normalized) {
-    slugBrandingCache.set(normalized, { ...branding });
+  if (!normalized) return;
+
+  const now = options?.now ?? Date.now();
+  const ttlMs = options?.ttlMs ?? SLUG_BRANDING_CACHE_TTL_MS;
+  const maxSize = options?.maxSize ?? SLUG_BRANDING_CACHE_MAX_SIZE;
+
+  // Refresh insertion order if updating existing key
+  slugBrandingCache.delete(normalized);
+
+  if (slugBrandingCache.size >= maxSize) {
+    for (const [k, entry] of slugBrandingCache.entries()) {
+      if (now >= entry.expiresAt) {
+        slugBrandingCache.delete(k);
+      }
+    }
   }
+  while (slugBrandingCache.size >= maxSize) {
+    const oldestKey = slugBrandingCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    slugBrandingCache.delete(oldestKey);
+  }
+
+  slugBrandingCache.set(normalized, {
+    branding: { ...branding },
+    expiresAt: now + ttlMs,
+  });
 }
 
 export const settingsRoutes = new Hono();
@@ -400,7 +450,15 @@ export const publicBrandingRoutes = new Hono();
 // GET /api/branding/:slug — PUBLIC route (no authentication required) for white-label login branding
 publicBrandingRoutes.get('/:slug', (c) => {
   const slug = normalizeSlug(c.req.param('slug'));
-  const cached = slugBrandingCache.get(slug);
+  const entry = slugBrandingCache.get(slug);
+  let cached: TenantBrandingSettings | undefined;
+  if (entry) {
+    if (Date.now() < entry.expiresAt) {
+      cached = entry.branding;
+    } else {
+      slugBrandingCache.delete(slug);
+    }
+  }
 
   const payload: PublicBrandingPayload = {
     slug,

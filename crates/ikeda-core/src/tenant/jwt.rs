@@ -14,6 +14,9 @@ use uuid::Uuid;
 /// Default TTL for the in-memory JWKS cache (5 minutes).
 pub const DEFAULT_JWKS_CACHE_TTL_SECS: u64 = 300;
 
+/// Minimum cooldown between on-demand JWKS refreshes triggered by unknown `kid` values (10 seconds).
+pub const DEFAULT_JWKS_REFRESH_COOLDOWN_SECS: u64 = 10;
+
 /// Default JWT claim name injected by Keycloak Protocol Mapper for multi-tenant isolation.
 pub const DEFAULT_TENANT_CLAIM_NAME: &str = "tenant_id";
 
@@ -46,12 +49,14 @@ pub struct JwksConfig {
     pub audience: Option<String>,
     /// How long fetched JWKS keys remain valid in memory before a scheduled refresh.
     pub cache_ttl: Duration,
+    /// Minimum cooldown between on-demand JWKS refreshes on unknown `kid` to prevent DoS amplification.
+    pub refresh_cooldown: Duration,
     /// Name of the JWT claim holding the tenant UUID (defaults to `"tenant_id"`).
     pub tenant_claim_name: String,
 }
 
 impl JwksConfig {
-    /// Creates a new `JwksConfig` with sensible defaults (5-minute cache TTL, `tenant_id` claim).
+    /// Creates a new `JwksConfig` with sensible defaults (5-minute cache TTL, 10s refresh cooldown, `tenant_id` claim).
     #[must_use]
     pub fn new(jwks_uri: impl Into<String>, issuer: impl Into<String>) -> Self {
         Self {
@@ -59,6 +64,7 @@ impl JwksConfig {
             issuer: issuer.into(),
             audience: None,
             cache_ttl: Duration::from_secs(DEFAULT_JWKS_CACHE_TTL_SECS),
+            refresh_cooldown: Duration::from_secs(DEFAULT_JWKS_REFRESH_COOLDOWN_SECS),
             tenant_claim_name: DEFAULT_TENANT_CLAIM_NAME.to_string(),
         }
     }
@@ -74,6 +80,13 @@ impl JwksConfig {
     #[must_use]
     pub fn with_cache_ttl(mut self, cache_ttl: Duration) -> Self {
         self.cache_ttl = cache_ttl;
+        self
+    }
+
+    /// Overrides the minimum cooldown between on-demand JWKS refreshes.
+    #[must_use]
+    pub fn with_refresh_cooldown(mut self, refresh_cooldown: Duration) -> Self {
+        self.refresh_cooldown = refresh_cooldown;
         self
     }
 
@@ -152,15 +165,22 @@ impl JwksJwtValidator {
         {
             let guard = self.cache.read().await;
             if let Some(cached) = guard.as_ref() {
-                if cached.fetched_at.elapsed() < self.config.cache_ttl {
+                let elapsed = cached.fetched_at.elapsed();
+                if elapsed < self.config.cache_ttl {
                     if let Some(jwk) = find_jwk(&cached.jwks, kid) {
                         return Ok(jwk.clone());
+                    }
+                    // Cooldown guard: do not hammer upstream JWKS endpoint on unknown `kid` floods
+                    if elapsed < self.config.refresh_cooldown {
+                        return Err(AppError::Unauthorized(
+                            "Unable to find matching JWK for token 'kid'".to_string(),
+                        ));
                     }
                 }
             }
         }
 
-        // 2. Cache miss, expired TTL, or unknown kid -> refresh from JWKS URI
+        // 2. Cache miss, expired TTL, or unknown kid past cooldown -> refresh from JWKS URI
         let jwks = self.refresh_jwks().await?;
 
         find_jwk(&jwks, kid).cloned().ok_or_else(|| {

@@ -81,11 +81,11 @@ jobs:
           JWKS_URI: ${{ vars.JWKS_URI }}
           JWT_ISSUER: ${{ vars.JWT_ISSUER }}
         run: |
-          ENV_VARS="RUST_LOG=info,sqlx=warn"
-          [ -n "${DATABASE_URL}" ] && ENV_VARS="${ENV_VARS},DATABASE_URL=${DATABASE_URL}"
-          [ -n "${IDENTITY_DATABASE_URL}" ] && ENV_VARS="${ENV_VARS},IDENTITY_DATABASE_URL=${IDENTITY_DATABASE_URL}"
-          [ -n "${JWKS_URI}" ] && ENV_VARS="${ENV_VARS},JWKS_URI=${JWKS_URI}"
-          [ -n "${JWT_ISSUER}" ] && ENV_VARS="${ENV_VARS},JWT_ISSUER=${JWT_ISSUER}"
+          ENV_VARS="^|^RUST_LOG=info,sqlx=warn|LOG_FORMAT=json"
+          [ -n "${DATABASE_URL}" ] && ENV_VARS="${ENV_VARS}|DATABASE_URL=${DATABASE_URL}"
+          [ -n "${IDENTITY_DATABASE_URL}" ] && ENV_VARS="${ENV_VARS}|IDENTITY_DATABASE_URL=${IDENTITY_DATABASE_URL}"
+          [ -n "${JWKS_URI}" ] && ENV_VARS="${ENV_VARS}|JWKS_URI=${JWKS_URI}"
+          [ -n "${JWT_ISSUER}" ] && ENV_VARS="${ENV_VARS}|JWT_ISSUER=${JWT_ISSUER}"
 
           gcloud run deploy "${{ steps.meta.outputs.cloud_run_service }}" \
             --image="${{ steps.meta.outputs.image_uri }}" \

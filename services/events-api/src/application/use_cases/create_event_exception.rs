@@ -1,5 +1,5 @@
 use crate::domain::models::{EventException, TimeRange};
-use crate::domain::repositories::EventRepository;
+use crate::domain::repositories::{CalendarRepository, EventRepository};
 use chrono::{DateTime, Utc};
 use ikeda_core::error::AppError;
 use serde::{Deserialize, Serialize};
@@ -22,16 +22,27 @@ pub struct CreateEventExceptionCommand {
 
 /// Application use case: creates an exception overriding a specific occurrence of a recurring event.
 pub struct CreateEventExceptionUseCase {
+    calendar_repo: Option<Arc<dyn CalendarRepository>>,
     event_repo: Arc<dyn EventRepository>,
 }
 
 impl CreateEventExceptionUseCase {
     /// Constructs a new `CreateEventExceptionUseCase`.
     pub fn new(event_repo: Arc<dyn EventRepository>) -> Self {
-        Self { event_repo }
+        Self {
+            calendar_repo: None,
+            event_repo,
+        }
     }
 
-    /// Validates recurrence and persists the event exception.
+    /// Attaches a `CalendarRepository` so rescheduled occurrences enforce `allow_overlaps = false`.
+    #[must_use]
+    pub fn with_calendar_repo(mut self, calendar_repo: Arc<dyn CalendarRepository>) -> Self {
+        self.calendar_repo = Some(calendar_repo);
+        self
+    }
+
+    /// Validates recurrence, enforces calendar overlap rules on reschedule, and persists the event exception.
     pub async fn execute(
         &self,
         tenant_id: Uuid,
@@ -67,6 +78,18 @@ impl CreateEventExceptionUseCase {
             EventException::reschedule(tenant_id, event_id, cmd.original_starts_at, range)
         };
 
-        self.event_repo.add_exception(tenant_id, &exception).await
+        let allow_overlaps = if let Some(ref cal_repo) = self.calendar_repo {
+            cal_repo
+                .find_by_id(tenant_id, event.calendar_id)
+                .await?
+                .map(|c| c.allow_overlaps)
+                .unwrap_or(true)
+        } else {
+            true
+        };
+
+        self.event_repo
+            .add_exception_checked(tenant_id, event.calendar_id, &exception, allow_overlaps)
+            .await
     }
 }

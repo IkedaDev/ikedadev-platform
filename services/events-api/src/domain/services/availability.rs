@@ -2,6 +2,9 @@ use crate::domain::models::TimeRange;
 use chrono::Duration;
 use ikeda_core::error::AppError;
 
+/// Maximum number of free slots generated in a single availability query to prevent memory DoS.
+pub const MAX_AVAILABILITY_SLOTS: usize = 5_000;
+
 /// Merges and consolidates overlapping or adjacent busy intervals.
 #[must_use]
 pub fn merge_busy_intervals(intervals: &[TimeRange]) -> Vec<TimeRange> {
@@ -54,6 +57,11 @@ pub fn calculate_free_slots(
             // Free window between cursor and busy_start
             let mut window_start = current_cursor;
             while window_start + slot_duration <= busy_start {
+                if free_slots.len() >= MAX_AVAILABILITY_SLOTS {
+                    return Err(AppError::BadRequest(format!(
+                        "Availability query exceeds maximum of {MAX_AVAILABILITY_SLOTS} slots; narrow the date range or increase slot_duration_minutes"
+                    )));
+                }
                 let slot = TimeRange::new(window_start, window_start + slot_duration)?;
                 free_slots.push(slot);
                 window_start += slot_duration;
@@ -67,6 +75,11 @@ pub fn calculate_free_slots(
     if current_cursor < query_range.ends_at {
         let mut window_start = current_cursor;
         while window_start + slot_duration <= query_range.ends_at {
+            if free_slots.len() >= MAX_AVAILABILITY_SLOTS {
+                return Err(AppError::BadRequest(format!(
+                    "Availability query exceeds maximum of {MAX_AVAILABILITY_SLOTS} slots; narrow the date range or increase slot_duration_minutes"
+                )));
+            }
             let slot = TimeRange::new(window_start, window_start + slot_duration)?;
             free_slots.push(slot);
             window_start += slot_duration;

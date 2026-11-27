@@ -80,11 +80,18 @@ impl BookingRepository for InMemoryBookingRepo {
         &self,
         tenant_id: Uuid,
         booking: &Booking,
+        expected_status: BookingStatus,
         _replace_items: bool,
     ) -> Result<Booking, AppError> {
         let mut map = self.bookings.lock().unwrap();
         if let Some(entry) = map.get_mut(&(tenant_id, booking.id)) {
             if entry.deleted_at.is_none() {
+                if entry.status != expected_status {
+                    return Err(AppError::Conflict(format!(
+                        "Booking '{}' status changed concurrently",
+                        booking.id
+                    )));
+                }
                 *entry = booking.clone();
                 return Ok(booking.clone());
             }
@@ -266,4 +273,46 @@ async fn test_terminal_booking_blocks_updates_and_further_transitions() {
         get_uc.execute(tenant_id, created.id).await,
         Err(AppError::NotFound(_))
     ));
+}
+
+#[tokio::test]
+async fn test_oversized_idempotency_key_returns_unprocessable_entity() {
+    let repo = Arc::new(InMemoryBookingRepo::default());
+    let uc = CreateBookingUseCase::new(repo);
+    let tenant_id = Uuid::new_v4();
+    let long_key = "k".repeat(256);
+
+    let err = uc
+        .execute(
+            tenant_id,
+            None,
+            sample_create_cmd(Utc::now()),
+            Some(&long_key),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::UnprocessableEntity { .. }));
+}
+
+#[tokio::test]
+async fn test_optimistic_status_guard_rejects_stale_expected_status() {
+    let repo = Arc::new(InMemoryBookingRepo::default());
+    let create_uc = CreateBookingUseCase::new(repo.clone());
+    let tenant_id = Uuid::new_v4();
+
+    let created = match create_uc
+        .execute(tenant_id, None, sample_create_cmd(Utc::now()), None)
+        .await
+        .unwrap()
+    {
+        IdempotentCreateResult::Created(b) => *b,
+        IdempotentCreateResult::Replayed { .. } => panic!("Expected Created"),
+    };
+
+    // Attempt to update expecting Pending when actual status is Scheduled -> 409 Conflict
+    let err = repo
+        .update(tenant_id, &created, BookingStatus::Pending, false)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::Conflict(_)));
 }

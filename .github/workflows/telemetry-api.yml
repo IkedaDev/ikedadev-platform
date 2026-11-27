@@ -81,11 +81,11 @@ jobs:
           JWKS_URI: ${{ vars.JWKS_URI }}
           JWT_ISSUER: ${{ vars.JWT_ISSUER }}
         run: |
-          ENV_VARS="RUST_LOG=info,sqlx=warn,LOG_FORMAT=json"
-          [ -n "${DATABASE_URL}" ] && ENV_VARS="${ENV_VARS},DATABASE_URL=${DATABASE_URL}"
-          [ -n "${IDENTITY_DATABASE_URL}" ] && ENV_VARS="${ENV_VARS},IDENTITY_DATABASE_URL=${IDENTITY_DATABASE_URL}"
-          [ -n "${JWKS_URI}" ] && ENV_VARS="${ENV_VARS},JWKS_URI=${JWKS_URI}"
-          [ -n "${JWT_ISSUER}" ] && ENV_VARS="${ENV_VARS},JWT_ISSUER=${JWT_ISSUER}"
+          ENV_VARS="^|^RUST_LOG=info,sqlx=warn|LOG_FORMAT=json"
+          [ -n "${DATABASE_URL}" ] && ENV_VARS="${ENV_VARS}|DATABASE_URL=${DATABASE_URL}"
+          [ -n "${IDENTITY_DATABASE_URL}" ] && ENV_VARS="${ENV_VARS}|IDENTITY_DATABASE_URL=${IDENTITY_DATABASE_URL}"
+          [ -n "${JWKS_URI}" ] && ENV_VARS="${ENV_VARS}|JWKS_URI=${JWKS_URI}"
+          [ -n "${JWT_ISSUER}" ] && ENV_VARS="${ENV_VARS}|JWT_ISSUER=${JWT_ISSUER}"
 
           gcloud run deploy "${{ steps.meta.outputs.cloud_run_service }}" \
             --image="${{ steps.meta.outputs.image_uri }}" \
@@ -101,12 +101,3 @@ jobs:
             --concurrency=80 \
             --timeout=15s \
             --set-env-vars="${ENV_VARS}"
-
-      - name: Grant BFF Invoker IAM Permission
-        run: |
-          gcloud run services add-iam-policy-binding "${{ steps.meta.outputs.cloud_run_service }}" \
-            --region="${{ steps.meta.outputs.region }}" \
-            --project="${{ vars.GCP_PROJECT_ID }}" \
-            --member="serviceAccount:bff-invoker@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com" \
-            --role="roles/run.invoker" \
-            --quiet

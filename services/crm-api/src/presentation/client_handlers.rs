@@ -16,6 +16,19 @@ use ikeda_core::response::{ApiResponse, PaginatedApiResponse};
 use ikeda_core::tenant::TenantContext;
 use uuid::Uuid;
 
+fn require_crm_write(ctx: &TenantContext) -> Result<(), AppError> {
+    if ctx.has_scope("crm:write")
+        || ctx.has_scope("tenant:admin")
+        || ctx.has_scope("platform:admin")
+    {
+        Ok(())
+    } else {
+        Err(AppError::Forbidden(
+            "Missing required scope: 'crm:write', 'tenant:admin', or 'platform:admin'".to_string(),
+        ))
+    }
+}
+
 /// Creates a new client within the authenticated tenant.
 #[utoipa::path(
     post,
@@ -34,6 +47,7 @@ pub async fn create_client(
     tenant: TenantContext,
     Json(cmd): Json<CreateClientCommand>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_crm_write(&tenant)?;
     let use_case = CreateClientUseCase::new(state.client_repo.clone());
     let client = use_case.execute(tenant.tenant_id, cmd).await?;
     let response = ApiResponse::created(client, "Client created successfully");
@@ -87,6 +101,7 @@ pub async fn patch_client(
     Path(id): Path<Uuid>,
     Json(cmd): Json<UpdateClientCommand>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_crm_write(&tenant)?;
     let use_case = UpdateClientUseCase::new(state.client_repo.clone());
     let updated = use_case.execute(tenant.tenant_id, id, cmd).await?;
     Ok(Json(ApiResponse::ok(updated)))
@@ -111,6 +126,7 @@ pub async fn delete_client(
     tenant: TenantContext,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_crm_write(&tenant)?;
     let use_case = DeleteClientUseCase::new(state.client_repo.clone());
     use_case.execute(tenant.tenant_id, id).await?;
     Ok(Json(ApiResponse::message("Client deleted successfully")))

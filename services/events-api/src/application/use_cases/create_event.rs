@@ -1,6 +1,6 @@
 use crate::domain::models::{Event, EventStatus, TimeRange};
 use crate::domain::repositories::{CalendarRepository, EventRepository};
-use crate::domain::services::{detect_overlaps, expand_recurrence};
+use crate::domain::services::parse_rrule_set;
 use chrono::{DateTime, Utc};
 use ikeda_core::error::AppError;
 use serde::{Deserialize, Serialize};
@@ -66,6 +66,20 @@ impl CreateEventUseCase {
 
         let time_range = TimeRange::new(cmd.starts_at, cmd.ends_at)?;
 
+        // Validate RRULE syntax before persisting so a malformed rule cannot poison the calendar
+        let normalized_rrule = match cmd.rrule {
+            Some(ref raw) => {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    parse_rrule_set(time_range.starts_at, trimmed)?;
+                    Some(trimmed.to_string())
+                }
+            }
+            None => None,
+        };
+
         // 1. Verify target calendar exists under the tenant
         let calendar = self
             .calendar_repo
@@ -74,35 +88,6 @@ impl CreateEventUseCase {
             .ok_or_else(|| {
                 AppError::NotFound(format!("Calendar '{}' not found", cmd.calendar_id))
             })?;
-
-        // 2. If calendar enforces strict overlap prevention, verify no conflicts exist
-        if !calendar.allow_overlaps {
-            let existing_events = self
-                .event_repo
-                .find_in_range(tenant_id, calendar.id, &time_range)
-                .await?;
-
-            let mut all_instances = Vec::new();
-            for existing in &existing_events {
-                let exceptions = if existing.is_recurring() {
-                    self.event_repo
-                        .find_exceptions(tenant_id, existing.id)
-                        .await?
-                } else {
-                    Vec::new()
-                };
-
-                let instances = expand_recurrence(existing, &time_range, &exceptions)?;
-                all_instances.extend(instances);
-            }
-
-            if detect_overlaps(&all_instances, &time_range) {
-                return Err(AppError::Conflict(
-                    "Event time window conflicts with an existing reservation on this calendar"
-                        .to_string(),
-                ));
-            }
-        }
 
         let timezone = cmd.timezone.unwrap_or_else(|| calendar.timezone.clone());
         let status = cmd.status.unwrap_or(EventStatus::Confirmed);
@@ -115,12 +100,15 @@ impl CreateEventUseCase {
             cmd.description,
             time_range,
             timezone,
-            cmd.rrule,
+            normalized_rrule,
             status,
             cmd.external_resource_id,
             metadata,
         );
 
-        self.event_repo.create(tenant_id, &event).await
+        // 2. Atomically enforce idempotency, strict overlap prevention (under advisory lock), and persistence
+        self.event_repo
+            .create_checked(tenant_id, &event, calendar.allow_overlaps)
+            .await
     }
 }

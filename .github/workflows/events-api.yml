@@ -82,12 +82,12 @@ jobs:
           JWT_ISSUER: ${{ vars.JWT_ISSUER }}
           QSTASH_TOKEN: ${{ secrets.QSTASH_TOKEN }}
         run: |
-          ENV_VARS="RUST_LOG=info,sqlx=warn"
-          [ -n "${DATABASE_URL}" ] && ENV_VARS="${ENV_VARS},DATABASE_URL=${DATABASE_URL}"
-          [ -n "${IDENTITY_DATABASE_URL}" ] && ENV_VARS="${ENV_VARS},IDENTITY_DATABASE_URL=${IDENTITY_DATABASE_URL}"
-          [ -n "${JWKS_URI}" ] && ENV_VARS="${ENV_VARS},JWKS_URI=${JWKS_URI}"
-          [ -n "${JWT_ISSUER}" ] && ENV_VARS="${ENV_VARS},JWT_ISSUER=${JWT_ISSUER}"
-          [ -n "${QSTASH_TOKEN}" ] && ENV_VARS="${ENV_VARS},QSTASH_TOKEN=${QSTASH_TOKEN}"
+          ENV_VARS="^|^RUST_LOG=info,sqlx=warn|LOG_FORMAT=json"
+          [ -n "${DATABASE_URL}" ] && ENV_VARS="${ENV_VARS}|DATABASE_URL=${DATABASE_URL}"
+          [ -n "${IDENTITY_DATABASE_URL}" ] && ENV_VARS="${ENV_VARS}|IDENTITY_DATABASE_URL=${IDENTITY_DATABASE_URL}"
+          [ -n "${JWKS_URI}" ] && ENV_VARS="${ENV_VARS}|JWKS_URI=${JWKS_URI}"
+          [ -n "${JWT_ISSUER}" ] && ENV_VARS="${ENV_VARS}|JWT_ISSUER=${JWT_ISSUER}"
+          [ -n "${QSTASH_TOKEN}" ] && ENV_VARS="${ENV_VARS}|QSTASH_TOKEN=${QSTASH_TOKEN}"
 
           gcloud run deploy "${{ steps.meta.outputs.cloud_run_service }}" \
             --image="${{ steps.meta.outputs.image_uri }}" \

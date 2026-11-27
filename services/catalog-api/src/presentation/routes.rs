@@ -10,6 +10,7 @@ use crate::domain::models::{
     BundleComponent, CatalogItem, CatalogItemVariant, Category, ItemDetails,
 };
 use axum::{
+    extract::DefaultBodyLimit,
     routing::{get, patch, post},
     Router,
 };
@@ -122,7 +123,10 @@ pub fn create_router(state: AppState) -> Router {
         // Catalog Items
         .route("/v1/items", post(create_item))
         .route("/v1/items/search", post(search_items))
-        .route("/v1/items/batch", post(batch_get_items))
+        .route(
+            "/v1/items/batch",
+            post(batch_get_items).layer(DefaultBodyLimit::max(512 * 1024)),
+        )
         .route(
             "/v1/items/{id}",
             get(get_item).patch(patch_item).delete(delete_item),
@@ -135,5 +139,6 @@ pub fn create_router(state: AppState) -> Router {
         )
         // Swagger UI
         .merge(SwaggerUi::new("/swagger-ui").url("/openapi.json", ApiDoc::openapi()))
+        .layer(DefaultBodyLimit::max(256 * 1024))
         .with_state(state)
 }

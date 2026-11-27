@@ -1,4 +1,4 @@
-use crate::domain::models::Booking;
+use crate::domain::models::{Booking, BookingStatus};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use ikeda_core::criteria::Criteria;
@@ -49,11 +49,12 @@ pub trait BookingRepository: Send + Sync {
     /// Retrieves a single active (non-deleted) booking with its items.
     async fn find_by_id(&self, tenant_id: Uuid, id: Uuid) -> Result<Option<Booking>, AppError>;
 
-    /// Updates a booking and optionally replaces all its `booking_items` atomically.
+    /// Updates a booking (guarded by optimistic `expected_status`) and optionally replaces all its `booking_items` atomically.
     async fn update(
         &self,
         tenant_id: Uuid,
         booking: &Booking,
+        expected_status: BookingStatus,
         replace_items: bool,
     ) -> Result<Booking, AppError>;
 

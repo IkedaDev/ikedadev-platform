@@ -411,6 +411,7 @@ export function CatalogView() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [items, setItems] = useState<CatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [busyRowId, setBusyRowId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const dirtyRef = useRef(false);
@@ -520,6 +521,7 @@ export function CatalogView() {
 
   const handleDeleteItem = useCallback(
     async (item: CatalogItem) => {
+      if (busyRowId === item.id) return;
       const ok = await confirm({
         title: 'Eliminar del catálogo',
         message: `¿Seguro que deseas eliminar "${item.name}"?`,
@@ -528,6 +530,7 @@ export function CatalogView() {
       });
       if (!ok) return;
 
+      setBusyRowId(item.id);
       try {
         await bffClient.deleteItem(item.id);
         toast.success(`"${item.name}" eliminado del catálogo.`);
@@ -536,13 +539,16 @@ export function CatalogView() {
         if (!(err instanceof BffApiError && err.notified)) {
           toast.error(err instanceof Error ? err.message : 'Error eliminando ítem');
         }
+      } finally {
+        setBusyRowId((prev) => (prev === item.id ? null : prev));
       }
     },
-    [confirm, toast, loadData, typeFilter],
+    [busyRowId, confirm, toast, loadData, typeFilter],
   );
 
   const handleDeleteCategory = useCallback(
     async (cat: Category) => {
+      if (busyRowId === cat.id) return;
       const ok = await confirm({
         title: 'Eliminar categoría',
         message: `¿Seguro que deseas eliminar la categoría "${cat.name}"?`,
@@ -551,6 +557,7 @@ export function CatalogView() {
       });
       if (!ok) return;
 
+      setBusyRowId(cat.id);
       try {
         await bffClient.deleteCategory(cat.id);
         toast.success(`Categoría "${cat.name}" eliminada.`);
@@ -559,9 +566,11 @@ export function CatalogView() {
         if (!(err instanceof BffApiError && err.notified)) {
           toast.error(err instanceof Error ? err.message : 'Error eliminando categoría');
         }
+      } finally {
+        setBusyRowId((prev) => (prev === cat.id ? null : prev));
       }
     },
-    [confirm, toast, loadData, typeFilter],
+    [busyRowId, confirm, toast, loadData, typeFilter],
   );
 
   const categoryColumns = useMemo<DataTableColumn<Category>[]>(
@@ -608,6 +617,8 @@ export function CatalogView() {
               size="sm"
               icon={<Trash2 size={13} />}
               onClick={() => handleDeleteCategory(c)}
+              disabled={busyRowId === c.id}
+              isLoading={busyRowId === c.id}
               aria-label={`Eliminar categoría ${c.name}`}
               title="Eliminar categoría"
             />
@@ -615,7 +626,7 @@ export function CatalogView() {
         ),
       },
     ],
-    [openCategoryDrawer, handleDeleteCategory],
+    [busyRowId, openCategoryDrawer, handleDeleteCategory],
   );
 
   const itemColumns = useMemo<DataTableColumn<CatalogItem>[]>(
@@ -699,6 +710,8 @@ export function CatalogView() {
               size="sm"
               icon={<Trash2 size={13} />}
               onClick={() => handleDeleteItem(i)}
+              disabled={busyRowId === i.id}
+              isLoading={busyRowId === i.id}
               aria-label={`Eliminar ${i.name}`}
               title="Eliminar"
             />
@@ -706,7 +719,7 @@ export function CatalogView() {
         ),
       },
     ],
-    [categoryMap, openItemDrawer, handleDeleteItem],
+    [busyRowId, categoryMap, openItemDrawer, handleDeleteItem],
   );
 
   return (

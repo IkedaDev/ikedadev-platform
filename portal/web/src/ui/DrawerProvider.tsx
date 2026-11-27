@@ -5,6 +5,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -34,8 +35,23 @@ const DrawerContext = createContext<DrawerContextValue | null>(null);
 export function DrawerProvider({ children }: { children: ReactNode }) {
   const [drawer, setDrawer] = useState<OpenDrawerOptions | null>(null);
   const { confirm, hasOpenModal } = useModal();
+  const backdropMouseDownRef = useRef(false);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
 
   useBodyScrollLock(drawer !== null);
+
+  useEffect(() => {
+    if (drawer) {
+      if (!previousFocusRef.current && document.activeElement instanceof HTMLElement) {
+        previousFocusRef.current = document.activeElement;
+      }
+      panelRef.current?.focus();
+    } else if (previousFocusRef.current) {
+      previousFocusRef.current.focus();
+      previousFocusRef.current = null;
+    }
+  }, [drawer]);
 
   const requestClose = useCallback(
     async (force = false) => {
@@ -88,11 +104,20 @@ export function DrawerProvider({ children }: { children: ReactNode }) {
       {drawer && (
         <div
           className="drawer-backdrop"
-          onClick={() => {
-            void requestClose(false);
+          onMouseDown={(e) => {
+            backdropMouseDownRef.current = e.target === e.currentTarget;
+          }}
+          onClick={(e) => {
+            const startedOnBackdrop = backdropMouseDownRef.current;
+            backdropMouseDownRef.current = false;
+            if (startedOnBackdrop && e.target === e.currentTarget) {
+              void requestClose(false);
+            }
           }}
         >
           <div
+            ref={panelRef}
+            tabIndex={-1}
             className={`drawer-panel drawer-${drawer.size ?? 'md'}`}
             role="dialog"
             aria-modal="true"

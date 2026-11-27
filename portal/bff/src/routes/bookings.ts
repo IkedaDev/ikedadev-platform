@@ -18,6 +18,44 @@ import type {
   FilterRule,
 } from '../types/platform.js';
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isValidUuid(value: string): boolean {
+  return UUID_REGEX.test(value);
+}
+
+async function releaseEventSlotWithRetry(
+  eventId: string,
+  ctx: RequestContext,
+  logContext: { action: string; bookingId: string },
+): Promise<boolean> {
+  const maxAttempts = 2;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await eventsClient.deleteEvent(eventId, ctx);
+      return true;
+    } catch (err) {
+      if (err instanceof UpstreamApiError && err.status === 404) {
+        return true;
+      }
+      const isTransient5xx = err instanceof UpstreamApiError && err.status >= 500;
+      if (attempt < maxAttempts && isTransient5xx) {
+        continue;
+      }
+      console.error('[BFF Slot Release Warning]', {
+        action: logContext.action,
+        bookingId: logContext.bookingId,
+        eventId,
+        requestId: ctx.requestId ?? null,
+        attempt,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return false;
+    }
+  }
+  return false;
+}
+
 const createBookingSchema = z.object({
   clientId: z.string().uuid('clientId debe ser un UUID válido'),
   calendarId: z.string().uuid('calendarId debe ser un UUID válido'),
@@ -198,7 +236,7 @@ bookingsRoutes.get('/', async (c) => {
 //   4. Compensate: if bookings-api fails after event creation, delete the orphan event in events-api
 bookingsRoutes.post('/', async (c) => {
   const ctx = getRequestContext(c);
-  const rawBody = await c.req.json();
+  const rawBody = await c.req.json().catch(() => null);
   const parsed = createBookingSchema.safeParse(rawBody);
 
   if (!parsed.success) {
@@ -240,12 +278,14 @@ bookingsRoutes.post('/', async (c) => {
     .map((id) => catalogMap.get(id))
     .filter((i): i is CatalogItem => Boolean(i));
 
-  if (orderedItems.length === 0) {
+  if (orderedItems.length !== catalogItemIds.length) {
+    const missingIds = Array.from(new Set(catalogItemIds.filter((id) => !catalogMap.has(id))));
     return c.json(
       {
         success: false,
         code: 'CATALOG_ITEMS_NOT_FOUND',
-        message: 'Ninguno de los ítems seleccionados existe en catalog-api.',
+        message: 'Algunos de los ítems seleccionados no existen en catalog-api.',
+        details: { missingCatalogItemIds: missingIds },
       },
       404,
     );
@@ -306,15 +346,20 @@ bookingsRoutes.post('/', async (c) => {
     );
   } catch (err) {
     // Step 4: Compensation — remove orphan event from events-api so slot is released
-    try {
-      await eventsClient.deleteEvent(createdEvent.id, ctx);
-    } catch (compErr) {
-      console.error(
-        `[BFF Compensation Error] Failed to delete orphan event ${createdEvent.id}:`,
-        compErr,
-      );
-    }
+    await releaseEventSlotWithRetry(createdEvent.id, ctx, {
+      action: 'create_booking_compensation',
+      bookingId: 'uncreated',
+    });
     throw err;
+  }
+
+  // Idempotent replay protection: if bookings-api returned an existing booking with a different event_id,
+  // clean up the newly created duplicate event in events-api so no orphan remains.
+  if (booking.event_id && booking.event_id !== createdEvent.id) {
+    await releaseEventSlotWithRetry(createdEvent.id, ctx, {
+      action: 'idempotent_replay_cleanup',
+      bookingId: booking.id,
+    });
   }
 
   const enriched: EnrichedBooking = {
@@ -382,7 +427,18 @@ bookingsRoutes.post('/', async (c) => {
 bookingsRoutes.patch('/:id/status', async (c) => {
   const ctx = getRequestContext(c);
   const id = c.req.param('id');
-  const rawBody = await c.req.json();
+  if (!isValidUuid(id)) {
+    return c.json(
+      {
+        success: false,
+        code: 'VALIDATION_ERROR',
+        message: 'id debe ser un UUID válido',
+      },
+      422,
+    );
+  }
+
+  const rawBody = await c.req.json().catch(() => null);
   const parsed = transitionStatusSchema.safeParse(rawBody);
 
   if (!parsed.success) {
@@ -407,17 +463,12 @@ bookingsRoutes.patch('/:id/status', async (c) => {
     ctx,
   );
 
+  let slotReleased = true;
   if (updated.status === 'CANCELLED' && updated.event_id) {
-    try {
-      await eventsClient.deleteEvent(updated.event_id, ctx);
-    } catch (err) {
-      if (!(err instanceof UpstreamApiError && err.status === 404)) {
-        console.error(
-          `[BFF Slot Release Warning] Booking ${updated.id} cancelled, but failed to delete event ${updated.event_id}:`,
-          err,
-        );
-      }
-    }
+    slotReleased = await releaseEventSlotWithRetry(updated.event_id, ctx, {
+      action: 'cancel_booking',
+      bookingId: updated.id,
+    });
   }
 
   telemetryClient.emitAuditEventAsync(
@@ -432,6 +483,7 @@ bookingsRoutes.patch('/:id/status', async (c) => {
         booking_code: updated.booking_code,
         status: updated.status,
         cancellation_reason: updated.cancellation_reason ?? null,
+        slot_released: slotReleased,
       },
     },
     ctx,
@@ -442,6 +494,7 @@ bookingsRoutes.patch('/:id/status', async (c) => {
     success: true,
     message: `Estado actualizado a ${updated.status}`,
     data: enriched,
+    meta: { slotReleased },
   });
 });
 
@@ -449,17 +502,29 @@ bookingsRoutes.patch('/:id/status', async (c) => {
 bookingsRoutes.delete('/:id', async (c) => {
   const ctx = getRequestContext(c);
   const id = c.req.param('id');
+  if (!isValidUuid(id)) {
+    return c.json(
+      {
+        success: false,
+        code: 'VALIDATION_ERROR',
+        message: 'id debe ser un UUID válido',
+      },
+      422,
+    );
+  }
 
   const existing = await bookingsClient.getBooking(id, ctx).catch(() => null);
   await bookingsClient.deleteBooking(id, ctx);
 
-  if (existing?.event_id) {
-    try {
-      await eventsClient.deleteEvent(existing.event_id, ctx);
-    } catch (err) {
-      if (!(err instanceof UpstreamApiError && err.status === 404)) {
-        console.error(`[BFF Delete Warning] Failed to delete event ${existing.event_id}:`, err);
-      }
+  let slotReleased = false;
+  if (existing) {
+    if (existing.event_id) {
+      slotReleased = await releaseEventSlotWithRetry(existing.event_id, ctx, {
+        action: 'delete_booking',
+        bookingId: id,
+      });
+    } else {
+      slotReleased = true;
     }
   }
 
@@ -471,9 +536,18 @@ bookingsRoutes.delete('/:id', async (c) => {
       client_id: existing?.client_id ?? null,
       actor_id: ctx.actorId,
       request_id: ctx.requestId,
+      properties: {
+        slot_released: slotReleased,
+      },
     },
     ctx,
   );
 
-  return c.json({ success: true, message: 'Reserva eliminada y cupo liberado' });
+  return c.json({
+    success: true,
+    message: slotReleased
+      ? 'Reserva eliminada y cupo liberado'
+      : 'Reserva eliminada (no se pudo confirmar la liberación del cupo)',
+    meta: { slotReleased },
+  });
 });

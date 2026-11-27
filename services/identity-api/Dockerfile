@@ -35,7 +35,7 @@ RUN useradd -u 10001 -U -s /bin/sh appuser
 
 ENV PORT=8082 \
     HOST=0.0.0.0 \
-    RUST_LOG=info,identity_api=debug,tower_http=info
+    RUST_LOG=info,sqlx=warn,tower_http=info
 
 COPY --from=builder /app/target/release/identity-api /app/identity-api
 COPY --from=builder /app/services/identity-api/migrations /app/migrations

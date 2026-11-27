@@ -21,6 +21,20 @@ use uuid::Uuid;
 /// Header name for idempotent booking creation.
 pub const HEADER_IDEMPOTENCY_KEY: &str = "idempotency-key";
 
+fn require_bookings_write(ctx: &TenantContext) -> Result<(), AppError> {
+    if ctx.has_scope("bookings:write")
+        || ctx.has_scope("tenant:admin")
+        || ctx.has_scope("platform:admin")
+    {
+        Ok(())
+    } else {
+        Err(AppError::Forbidden(
+            "Missing required scope: 'bookings:write', 'tenant:admin', or 'platform:admin'"
+                .to_string(),
+        ))
+    }
+}
+
 /// Creates a new multi-service booking with frozen commercial snapshots and optional `Idempotency-Key`.
 #[utoipa::path(
     post,
@@ -43,6 +57,7 @@ pub async fn create_booking(
     headers: HeaderMap,
     Json(cmd): Json<CreateBookingCommand>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_bookings_write(&tenant)?;
     let idempotency_key = headers
         .get(HEADER_IDEMPOTENCY_KEY)
         .and_then(|v| v.to_str().ok())
@@ -121,6 +136,7 @@ pub async fn patch_booking(
     Path(id): Path<Uuid>,
     Json(cmd): Json<UpdateBookingCommand>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_bookings_write(&tenant)?;
     let uc = UpdateBookingUseCase::new(state.booking_repo.clone());
     let booking = uc
         .execute(tenant.tenant_id, id, tenant.user_id, cmd)
@@ -150,6 +166,7 @@ pub async fn transition_booking_status(
     Path(id): Path<Uuid>,
     Json(cmd): Json<TransitionBookingStatusCommand>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_bookings_write(&tenant)?;
     let uc = TransitionBookingStatusUseCase::new(state.booking_repo.clone());
     let booking = uc
         .execute(tenant.tenant_id, id, tenant.user_id, cmd)
@@ -176,6 +193,7 @@ pub async fn delete_booking(
     tenant: TenantContext,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_bookings_write(&tenant)?;
     let uc = DeleteBookingUseCase::new(state.booking_repo.clone());
     uc.execute(tenant.tenant_id, id).await?;
     Ok(StatusCode::NO_CONTENT)

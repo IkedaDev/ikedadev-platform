@@ -1,3 +1,4 @@
+use super::event_handlers::require_events_write;
 use super::state::AppState;
 use crate::application::use_cases::{
     CreateCalendarCommand, CreateCalendarUseCase, DeleteCalendarUseCase, UpdateCalendarCommand,
@@ -32,6 +33,7 @@ pub async fn create_calendar(
     tenant: TenantContext,
     Json(cmd): Json<CreateCalendarCommand>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_events_write(&tenant)?;
     let use_case = CreateCalendarUseCase::new(state.calendar_repo.clone());
     let calendar = use_case.execute(tenant.tenant_id, cmd).await?;
 
@@ -108,6 +110,7 @@ pub async fn patch_calendar(
     Path(id): Path<Uuid>,
     Json(cmd): Json<UpdateCalendarCommand>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_events_write(&tenant)?;
     let use_case = UpdateCalendarUseCase::new(state.calendar_repo.clone());
     let calendar = use_case.execute(tenant.tenant_id, id, cmd).await?;
 
@@ -133,6 +136,7 @@ pub async fn delete_calendar(
     tenant: TenantContext,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_events_write(&tenant)?;
     let use_case = DeleteCalendarUseCase::new(state.calendar_repo.clone());
     use_case.execute(tenant.tenant_id, id).await?;
 

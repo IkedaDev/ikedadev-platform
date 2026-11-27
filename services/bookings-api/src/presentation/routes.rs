@@ -6,6 +6,7 @@ use crate::application::use_cases::{
 use crate::domain::models::{Booking, BookingItem, BookingStatus};
 use crate::domain::services::BookingItemInput;
 use axum::{
+    extract::DefaultBodyLimit,
     routing::{get, patch, post},
     Router,
 };
@@ -99,5 +100,6 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/v1/bookings/{id}/status", patch(transition_booking_status))
         .merge(SwaggerUi::new("/swagger-ui").url("/openapi.json", ApiDoc::openapi()))
+        .layer(DefaultBodyLimit::max(256 * 1024))
         .with_state(state)
 }

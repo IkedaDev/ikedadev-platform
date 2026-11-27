@@ -1,6 +1,5 @@
 use crate::domain::models::{Event, EventStatus, TimeRange};
 use crate::domain::repositories::{CalendarRepository, EventRepository};
-use crate::domain::services::{detect_overlaps, expand_recurrence};
 use chrono::{DateTime, Utc};
 use ikeda_core::error::AppError;
 use serde::{Deserialize, Serialize};
@@ -84,38 +83,6 @@ impl UpdateEventUseCase {
                 AppError::NotFound(format!("Calendar '{}' not found", event.calendar_id))
             })?;
 
-        if !calendar.allow_overlaps {
-            let existing_events = self
-                .event_repo
-                .find_in_range(tenant_id, calendar.id, &new_time_range)
-                .await?;
-
-            let mut all_instances = Vec::new();
-            for existing in &existing_events {
-                // Critical: exclude the event currently being updated from collision detection
-                if existing.id == event_id {
-                    continue;
-                }
-
-                let exceptions = if existing.is_recurring() {
-                    self.event_repo
-                        .find_exceptions(tenant_id, existing.id)
-                        .await?
-                } else {
-                    Vec::new()
-                };
-
-                let instances = expand_recurrence(existing, &new_time_range, &exceptions)?;
-                all_instances.extend(instances);
-            }
-
-            if detect_overlaps(&all_instances, &new_time_range) {
-                return Err(AppError::Conflict(
-                    "Event overlaps with an existing reservation on this calendar".to_string(),
-                ));
-            }
-        }
-
         event.time_range = new_time_range;
 
         if let Some(status) = cmd.status {
@@ -126,6 +93,8 @@ impl UpdateEventUseCase {
             event.metadata = metadata;
         }
 
-        self.event_repo.update(tenant_id, &event).await
+        self.event_repo
+            .update_checked(tenant_id, &event, calendar.allow_overlaps)
+            .await
     }
 }

@@ -1,0 +1,119 @@
+{
+  "realm": "ikeda",
+  "enabled": true,
+  "displayName": "IkedaDev Platform",
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "accessTokenLifespan": 900,
+  "ssoSessionIdleTimeout": 3600,
+  "ssoSessionMaxLifespan": 36000,
+  "components": {
+    "org.keycloak.userprofile.UserProfileProvider": [
+      {
+        "providerId": "declarative-user-profile",
+        "subComponents": {},
+        "config": {
+          "kc.user.profile.config": [
+            "{\"attributes\":[{\"name\":\"username\",\"displayName\":\"${username}\",\"validations\":{\"length\":{\"min\":3,\"max\":255},\"username-prohibited-characters\":{},\"up-username-not-idn-homograph\":{}},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"multivalued\":false},{\"name\":\"email\",\"displayName\":\"${email}\",\"validations\":{\"email\":{},\"length\":{\"max\":255}},\"required\":{\"roles\":[\"user\"]},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"multivalued\":false},{\"name\":\"firstName\",\"displayName\":\"${firstName}\",\"validations\":{\"length\":{\"max\":255},\"person-name-prohibited-characters\":{}},\"required\":{\"roles\":[\"user\"]},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"multivalued\":false},{\"name\":\"lastName\",\"displayName\":\"${lastName}\",\"validations\":{\"length\":{\"max\":255},\"person-name-prohibited-characters\":{}},\"required\":{\"roles\":[\"user\"]},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"multivalued\":false},{\"name\":\"tenant_id\",\"displayName\":\"Tenant ID\",\"validations\":{\"length\":{\"min\":36,\"max\":36}},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\"]},\"multivalued\":false}],\"groups\":[{\"name\":\"user-metadata\",\"displayHeader\":\"User metadata\",\"displayDescription\":\"Attributes, which refer to user metadata\"}],\"unmanagedAttributePolicy\":\"ADMIN_EDIT\"}"
+          ]
+        }
+      }
+    ]
+  },
+  "roles": {
+    "realm": [
+      { "name": "platform:admin", "description": "Platform super-administrator" },
+      { "name": "tenant:admin", "description": "Tenant administrator (manages users & API keys)" },
+      { "name": "tenant:member", "description": "Standard tenant staff member" },
+      { "name": "events:write", "description": "Write access to events-api" },
+      { "name": "crm:write", "description": "Write access to crm-api" },
+      { "name": "catalog:write", "description": "Write access to catalog-api" },
+      { "name": "identity:write", "description": "Write access to identity-api" },
+      { "name": "bookings:write", "description": "Write access to bookings-api" },
+      { "name": "telemetry:read", "description": "Read access to telemetry-api" },
+      { "name": "telemetry:write", "description": "Write access to telemetry-api" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "identity-api-admin",
+      "name": "Identity API Service Account",
+      "description": "Confidential M2M client used by identity-api to manage realm users and roles via Keycloak Admin REST API.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "${KEYCLOAK_ADMIN_CLIENT_SECRET}",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": false,
+      "fullScopeAllowed": true
+    },
+    {
+      "clientId": "tenant-portal-bff",
+      "name": "Tenant Portal BFF",
+      "description": "Confidential OIDC client for the Tenant Portal BFF (Authorization Code + PKCE).",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "${KEYCLOAK_BFF_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": true,
+      "rootUrl": "https://portal.ikedadev.com",
+      "baseUrl": "https://portal.ikedadev.com",
+      "redirectUris": [
+        "https://bff.ikedadev.com/auth/callback"
+      ],
+      "webOrigins": [
+        "https://portal.ikedadev.com",
+        "https://bff.ikedadev.com"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://portal.ikedadev.com"
+      },
+      "protocolMappers": [
+        {
+          "name": "tenant_id-attribute-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "tenant_id",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "false",
+            "aggregate.attrs": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "service-account-identity-api-admin",
+      "enabled": true,
+      "serviceAccountClientId": "identity-api-admin",
+      "clientRoles": {
+        "realm-management": [
+          "manage-users",
+          "view-users",
+          "query-users",
+          "view-realm",
+          "manage-realm"
+        ]
+      }
+    }
+  ]
+}

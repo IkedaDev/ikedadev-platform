@@ -453,6 +453,7 @@ export function BookingsView() {
 
   const [loading, setLoading] = useState(true);
   const [availLoading, setAvailLoading] = useState(false);
+  const [busyBookingId, setBusyBookingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const dirtyRef = useRef(false);
@@ -590,6 +591,7 @@ export function BookingsView() {
 
   const handleTransitionStatus = useCallback(
     async (booking: EnrichedBooking, targetStatus: BookingStatus) => {
+      if (busyBookingId === booking.id) return;
       if (targetStatus === 'CANCELLED') {
         const ok = await confirm({
           title: `Cancelar reserva ${booking.booking_code}`,
@@ -601,6 +603,7 @@ export function BookingsView() {
         if (!ok) return;
       }
 
+      setBusyBookingId(booking.id);
       try {
         const updated = await bffClient.transitionBookingStatus(booking.id, {
           status: targetStatus,
@@ -617,13 +620,16 @@ export function BookingsView() {
             err instanceof Error ? err.message : 'Error actualizando estado de la reserva',
           );
         }
+      } finally {
+        setBusyBookingId((prev) => (prev === booking.id ? null : prev));
       }
     },
-    [confirm, toast, loadBaseData, loadAvailability],
+    [busyBookingId, confirm, toast, loadBaseData, loadAvailability],
   );
 
   const handleDeleteBooking = useCallback(
     async (booking: EnrichedBooking) => {
+      if (busyBookingId === booking.id) return;
       const ok = await confirm({
         title: `Eliminar reserva ${booking.booking_code}`,
         message: '¿Seguro que deseas eliminar esta reserva del listado?',
@@ -632,6 +638,7 @@ export function BookingsView() {
       });
       if (!ok) return;
 
+      setBusyBookingId(booking.id);
       try {
         await bffClient.deleteBooking(booking.id);
         toast.success(`Reserva ${booking.booking_code} eliminada.`);
@@ -640,15 +647,18 @@ export function BookingsView() {
         if (!(err instanceof BffApiError && err.notified)) {
           toast.error(err instanceof Error ? err.message : 'Error eliminando reserva');
         }
+      } finally {
+        setBusyBookingId((prev) => (prev === booking.id ? null : prev));
       }
     },
-    [confirm, toast, loadBaseData, loadAvailability],
+    [busyBookingId, confirm, toast, loadBaseData, loadAvailability],
   );
 
   const filteredBookings = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
     const now = new Date();
     const todayKey = toDateInputValue(now);
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const sevenDaysEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
     return bookings.filter((b) => {
@@ -659,7 +669,7 @@ export function BookingsView() {
         if (bDate !== todayKey) return false;
       } else if (dateFilter === 'NEXT_7_DAYS') {
         const d = new Date(b.starts_at);
-        if (d < new Date(now.setHours(0, 0, 0, 0)) || d > sevenDaysEnd) return false;
+        if (d < todayStart || d > sevenDaysEnd) return false;
       }
 
       if (!q) return true;
@@ -766,52 +776,60 @@ export function BookingsView() {
         key: 'actions',
         header: 'Acciones',
         align: 'right',
-        render: (b) => (
-          <div className="row-end row-wrap">
-            {!isTerminalStatus(b.status) && (
-              <>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  icon={<Check size={13} />}
-                  onClick={() => handleTransitionStatus(b, 'COMPLETED')}
-                  title="Marcar como completada"
-                >
-                  Completar
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  icon={<UserX size={13} />}
-                  onClick={() => handleTransitionStatus(b, 'NO_SHOW')}
-                  title="Marcar que no asistió"
-                >
-                  No asistió
-                </Button>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  icon={<XCircle size={13} />}
-                  onClick={() => handleTransitionStatus(b, 'CANCELLED')}
-                  title="Cancelar reserva"
-                >
-                  Cancelar
-                </Button>
-              </>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<Trash2 size={13} />}
-              onClick={() => handleDeleteBooking(b)}
-              aria-label={`Eliminar reserva ${b.booking_code}`}
-              title="Eliminar reserva"
-            />
-          </div>
-        ),
+        render: (b) => {
+          const isBusy = busyBookingId === b.id;
+          return (
+            <div className="row-end row-wrap">
+              {!isTerminalStatus(b.status) && (
+                <>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<Check size={13} />}
+                    onClick={() => handleTransitionStatus(b, 'COMPLETED')}
+                    disabled={isBusy}
+                    title="Marcar como completada"
+                  >
+                    Completar
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<UserX size={13} />}
+                    onClick={() => handleTransitionStatus(b, 'NO_SHOW')}
+                    disabled={isBusy}
+                    title="Marcar que no asistió"
+                  >
+                    No asistió
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    icon={<XCircle size={13} />}
+                    onClick={() => handleTransitionStatus(b, 'CANCELLED')}
+                    disabled={isBusy}
+                    title="Cancelar reserva"
+                  >
+                    Cancelar
+                  </Button>
+                </>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<Trash2 size={13} />}
+                onClick={() => handleDeleteBooking(b)}
+                disabled={isBusy}
+                isLoading={isBusy}
+                aria-label={`Eliminar reserva ${b.booking_code}`}
+                title="Eliminar reserva"
+              />
+            </div>
+          );
+        },
       },
     ],
-    [handleTransitionStatus, handleDeleteBooking],
+    [busyBookingId, handleTransitionStatus, handleDeleteBooking],
   );
 
   return (
@@ -928,11 +946,11 @@ export function BookingsView() {
                 <span className="text-sm text-muted">No hay bloques libres en esta fecha.</span>
               ) : (
                 <div className="chip-list">
-                  {availability.available_slots.slice(0, 24).map((slot) => {
+                  {availability.available_slots.slice(0, 24).map((slot, idx) => {
                     const localVal = toLocalDateTimeInputValue(slot.starts_at);
                     return (
                       <button
-                        key={slot.starts_at}
+                        key={`${slot.starts_at}_${slot.ends_at}_${idx}`}
                         type="button"
                         className="pill-btn row-sm"
                         onClick={() => openBookingDrawer(localVal)}
@@ -954,9 +972,9 @@ export function BookingsView() {
                   Horarios ocupados ({availability.busy_slots.length})
                 </span>
                 <div className="chip-list">
-                  {availability.busy_slots.map((slot) => (
+                  {availability.busy_slots.map((slot, idx) => (
                     <StatusBadge
-                      key={slot.starts_at}
+                      key={`${slot.starts_at}_${slot.ends_at}_${idx}`}
                       label={`${formatTimeOnly(slot.starts_at)} - ${formatTimeOnly(slot.ends_at)}`}
                       tone="red"
                     />

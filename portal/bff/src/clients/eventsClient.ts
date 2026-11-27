@@ -22,7 +22,7 @@ export const eventsClient = {
   },
 
   getCalendar(id: string, ctx?: RequestContext): Promise<Calendar> {
-    return http.requestData<Calendar>('GET', `/v1/calendars/${id}`, { ctx });
+    return http.requestData<Calendar>('GET', `/v1/calendars/${encodeURIComponent(id)}`, { ctx });
   },
 
   createCalendar(cmd: CreateCalendarCommand, ctx?: RequestContext): Promise<Calendar> {
@@ -36,7 +36,7 @@ export const eventsClient = {
   ): Promise<AvailabilityResult> {
     return http.requestData<AvailabilityResult>(
       'GET',
-      `/v1/calendars/${calendarId}/availability`,
+      `/v1/calendars/${encodeURIComponent(calendarId)}/availability`,
       {
         query: params,
         ctx,
@@ -55,7 +55,7 @@ export const eventsClient = {
   },
 
   getEvent(id: string, ctx?: RequestContext): Promise<EventRecord> {
-    return http.requestData<EventRecord>('GET', `/v1/events/${id}`, { ctx });
+    return http.requestData<EventRecord>('GET', `/v1/events/${encodeURIComponent(id)}`, { ctx });
   },
 
   createEvent(cmd: CreateEventCommand, ctx?: RequestContext): Promise<EventRecord> {
@@ -63,6 +63,6 @@ export const eventsClient = {
   },
 
   deleteEvent(id: string, ctx?: RequestContext): Promise<void> {
-    return http.request<void>('DELETE', `/v1/events/${id}`, { ctx });
+    return http.request<void>('DELETE', `/v1/events/${encodeURIComponent(id)}`, { ctx });
   },
 };

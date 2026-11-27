@@ -324,6 +324,7 @@ export function IdentityView() {
   const [users, setUsers] = useState<TenantUser[]>([]);
   const [apiKeys, setApiKeys] = useState<ApiKeySummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [busyRowId, setBusyRowId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const dirtyRef = useRef(false);
@@ -415,6 +416,7 @@ export function IdentityView() {
 
   const handleDeleteUser = useCallback(
     async (user: TenantUser) => {
+      if (busyRowId === user.id) return;
       const ok = await confirm({
         title: 'Quitar miembro del equipo',
         message: `¿Deshabilitar y eliminar el acceso de "${user.full_name}" (${user.email})?`,
@@ -423,6 +425,7 @@ export function IdentityView() {
       });
       if (!ok) return;
 
+      setBusyRowId(user.id);
       try {
         await bffClient.deleteUser(user.id);
         toast.success(`Acceso de "${user.full_name}" eliminado.`);
@@ -431,13 +434,16 @@ export function IdentityView() {
         if (!(err instanceof BffApiError && err.notified)) {
           toast.error(err instanceof Error ? err.message : 'Error eliminando miembro');
         }
+      } finally {
+        setBusyRowId((prev) => (prev === user.id ? null : prev));
       }
     },
-    [confirm, toast, loadData],
+    [busyRowId, confirm, toast, loadData],
   );
 
   const handleRevokeKey = useCallback(
     async (key: ApiKeySummary) => {
+      if (busyRowId === key.id) return;
       const ok = await confirm({
         title: 'Revocar clave de integración',
         message: `¿Revocar la clave "${key.name}"? Las aplicaciones conectadas con esta clave dejarán de tener acceso.`,
@@ -446,6 +452,7 @@ export function IdentityView() {
       });
       if (!ok) return;
 
+      setBusyRowId(key.id);
       try {
         await bffClient.revokeApiKey(key.id);
         toast.success(`Clave "${key.name}" revocada.`);
@@ -454,9 +461,11 @@ export function IdentityView() {
         if (!(err instanceof BffApiError && err.notified)) {
           toast.error(err instanceof Error ? err.message : 'Error revocando clave');
         }
+      } finally {
+        setBusyRowId((prev) => (prev === key.id ? null : prev));
       }
     },
-    [confirm, toast, loadData],
+    [busyRowId, confirm, toast, loadData],
   );
 
   const userColumns = useMemo<DataTableColumn<TenantUser>[]>(
@@ -509,6 +518,8 @@ export function IdentityView() {
               size="sm"
               icon={<Trash2 size={13} />}
               onClick={() => handleDeleteUser(u)}
+              disabled={busyRowId === u.id}
+              isLoading={busyRowId === u.id}
               aria-label={`Eliminar miembro ${u.full_name}`}
               title="Eliminar acceso"
             />
@@ -516,7 +527,7 @@ export function IdentityView() {
         ),
       },
     ],
-    [handleDeleteUser],
+    [busyRowId, handleDeleteUser],
   );
 
   const apiKeyColumns = useMemo<DataTableColumn<ApiKeySummary>[]>(
@@ -578,7 +589,13 @@ export function IdentityView() {
           if (isRevoked) return <span className="text-xs text-muted">—</span>;
           return (
             <div className="row-end">
-              <Button variant="danger" size="sm" onClick={() => handleRevokeKey(k)}>
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => handleRevokeKey(k)}
+                disabled={busyRowId === k.id}
+                isLoading={busyRowId === k.id}
+              >
                 Revocar
               </Button>
             </div>
@@ -586,7 +603,7 @@ export function IdentityView() {
         },
       },
     ],
-    [handleRevokeKey],
+    [busyRowId, handleRevokeKey],
   );
 
   return (

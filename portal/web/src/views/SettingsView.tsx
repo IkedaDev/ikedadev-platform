@@ -20,6 +20,7 @@ import type {
   ThemeMode,
 } from '../types/api';
 import { BrandLogo, Button, Input, Select, StatusBadge, formatMoney, useToast } from '../ui';
+import { sanitizeLogoUrl } from '../utils/url';
 
 interface SettingsViewProps {
   onDirtyChange?: (dirty: boolean) => void;
@@ -141,21 +142,17 @@ export function SettingsView({ onDirtyChange }: SettingsViewProps) {
     key: K,
     value: TenantBranding[K],
   ) => {
-    setBranding((prev) => {
-      const next = { ...prev, [key]: value };
-      applyPreview(next);
-      return next;
-    });
+    const next = { ...branding, [key]: value };
+    setBranding(next);
+    applyPreview(next);
     onDirtyChange?.(true);
   };
 
   const applyPalette = (primaryColor: string, accentColor: string) => {
     if (!canEditSettings) return;
-    setBranding((prev) => {
-      const next = { ...prev, primaryColor, accentColor };
-      applyPreview(next);
-      return next;
-    });
+    const next = { ...branding, primaryColor, accentColor };
+    setBranding(next);
+    applyPreview(next);
     onDirtyChange?.(true);
   };
 
@@ -200,12 +197,19 @@ export function SettingsView({ onDirtyChange }: SettingsViewProps) {
       return;
     }
 
+    const trimmedLogo = branding.logoUrl.trim();
+    const sanitizedLogo = trimmedLogo ? sanitizeLogoUrl(trimmedLogo) : '';
+    if (trimmedLogo && !sanitizedLogo) {
+      toast.error('La URL del logotipo debe usar https:// o una ruta relativa válida.');
+      return;
+    }
+
     setSaving(true);
     try {
       const updated = await updateSettings({
         branding: {
           displayName: branding.displayName.trim() || 'Kropy',
-          logoUrl: branding.logoUrl.trim(),
+          logoUrl: sanitizedLogo ?? '',
           primaryColor: branding.primaryColor,
           accentColor: branding.accentColor,
           themeMode: branding.themeMode,
@@ -338,6 +342,11 @@ export function SettingsView({ onDirtyChange }: SettingsViewProps) {
                 onChange={(e) => updateBrandingField('logoUrl', e.target.value)}
                 placeholder="https://tunegocio.com/logo.png"
                 hint="Si lo dejas vacío o la imagen no carga, mostraremos tus iniciales."
+                error={
+                  branding.logoUrl.trim() && !sanitizeLogoUrl(branding.logoUrl)
+                    ? 'Usa una URL https:// o una ruta relativa válida (/logo.png)'
+                    : undefined
+                }
                 disabled={!canEditSettings}
               />
 

@@ -6,6 +6,9 @@ use ikeda_core::error::AppError;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// Maximum time window allowed for a single availability query (90 days).
+pub const MAX_AVAILABILITY_RANGE_DAYS: i64 = 90;
+
 /// Query parameters for availability checks.
 #[derive(Debug, Clone)]
 pub struct CheckAvailabilityQuery {
@@ -41,6 +44,12 @@ impl CheckAvailabilityUseCase {
         tenant_id: Uuid,
         query: CheckAvailabilityQuery,
     ) -> Result<AvailabilityResult, AppError> {
+        if query.range.duration() > Duration::days(MAX_AVAILABILITY_RANGE_DAYS) {
+            return Err(AppError::BadRequest(format!(
+                "Availability query range cannot exceed {MAX_AVAILABILITY_RANGE_DAYS} days"
+            )));
+        }
+
         // Verify calendar existence
         let _calendar = self
             .calendar_repo
@@ -55,16 +64,25 @@ impl CheckAvailabilityUseCase {
             .find_in_range(tenant_id, query.calendar_id, &query.range)
             .await?;
 
+        let recurring_ids: Vec<Uuid> = events
+            .iter()
+            .filter(|e| e.is_recurring())
+            .map(|e| e.id)
+            .collect();
+        let exceptions_map = self
+            .event_repo
+            .find_exceptions_batch(tenant_id, &recurring_ids)
+            .await?;
+
         let mut busy_intervals = Vec::new();
 
         for event in &events {
-            let exceptions = if event.is_recurring() {
-                self.event_repo.find_exceptions(tenant_id, event.id).await?
-            } else {
-                Vec::new()
-            };
+            let exceptions = exceptions_map
+                .get(&event.id)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
 
-            let instances = expand_recurrence(event, &query.range, &exceptions)?;
+            let instances = expand_recurrence(event, &query.range, exceptions)?;
             for inst in instances {
                 if inst.status != EventStatus::Cancelled {
                     busy_intervals.push(inst.time_range);

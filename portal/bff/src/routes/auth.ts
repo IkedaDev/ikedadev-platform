@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import {
@@ -15,9 +16,72 @@ import { config } from '../config.js';
 const OIDC_TX_COOKIE = 'ikeda_oidc_tx';
 const IS_HTTPS = config.BFF_PUBLIC_URL.startsWith('https://');
 
+const OIDC_ERROR_MESSAGES: Record<string, string> = {
+  access_denied: 'Acceso denegado por el proveedor de identidad',
+  login_required: 'Debes iniciar sesión nuevamente',
+  interaction_required: 'Se requiere interacción adicional para iniciar sesión',
+  temporarily_unavailable: 'Servicio de autenticación temporalmente no disponible',
+  invalid_request: 'Solicitud de autenticación inválida',
+};
+
 interface OidcTx {
   state: string;
   codeVerifier: string;
+}
+
+function getOidcTxSigningKey(): Buffer {
+  return crypto
+    .createHmac('sha256', config.KEYCLOAK_CLIENT_SECRET)
+    .update('ikeda_oidc_tx:v1')
+    .digest();
+}
+
+function timingSafeEqualStrings(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, 'utf8');
+  const bufB = Buffer.from(b, 'utf8');
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+export function signOidcTx(tx: OidcTx): string {
+  const payloadB64 = Buffer.from(JSON.stringify(tx)).toString('base64url');
+  const sig = crypto
+    .createHmac('sha256', getOidcTxSigningKey())
+    .update(payloadB64)
+    .digest('base64url');
+  return `${payloadB64}.${sig}`;
+}
+
+export function verifyOidcTx(raw: string): OidcTx | null {
+  const dotIdx = raw.indexOf('.');
+  if (dotIdx <= 0 || dotIdx === raw.length - 1 || raw.indexOf('.', dotIdx + 1) !== -1) {
+    return null;
+  }
+  const payloadB64 = raw.slice(0, dotIdx);
+  const providedSig = raw.slice(dotIdx + 1);
+  const expectedSig = crypto
+    .createHmac('sha256', getOidcTxSigningKey())
+    .update(payloadB64)
+    .digest('base64url');
+
+  if (!timingSafeEqualStrings(providedSig, expectedSig)) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8')) as Partial<OidcTx>;
+    if (
+      typeof parsed.state !== 'string' ||
+      parsed.state.length === 0 ||
+      typeof parsed.codeVerifier !== 'string' ||
+      parsed.codeVerifier.length === 0
+    ) {
+      return null;
+    }
+    return { state: parsed.state, codeVerifier: parsed.codeVerifier };
+  } catch {
+    return null;
+  }
 }
 
 export const authRoutes = new Hono();
@@ -29,9 +93,7 @@ authRoutes.get('/login', (c) => {
   const codeChallenge = computePkceChallenge(codeVerifier);
   const redirectUri = `${config.BFF_PUBLIC_URL.replace(/\/+$/, '')}/auth/callback`;
 
-  const txPayload = Buffer.from(JSON.stringify({ state, codeVerifier } satisfies OidcTx)).toString(
-    'base64url',
-  );
+  const txPayload = signOidcTx({ state, codeVerifier });
 
   setCookie(c, OIDC_TX_COOKIE, txPayload, {
     httpOnly: true,
@@ -56,17 +118,18 @@ authRoutes.get('/login', (c) => {
 // GET /auth/callback — Exchanges authorization code for Keycloak tokens and sets HttpOnly session cookie
 authRoutes.get('/callback', async (c) => {
   const error = c.req.query('error');
-  const errorDescription = c.req.query('error_description');
   if (error) {
+    deleteCookie(c, OIDC_TX_COOKIE, { path: '/auth', secure: IS_HTTPS });
     const redirectErr = new URL(config.WEB_APP_URL);
-    redirectErr.searchParams.set('auth_error', errorDescription || error);
+    const safeMsg = OIDC_ERROR_MESSAGES[error] ?? 'Error autenticando con Keycloak';
+    redirectErr.searchParams.set('auth_error', safeMsg);
     return c.redirect(redirectErr.toString());
   }
 
   const code = c.req.query('code');
   const state = c.req.query('state');
   const rawTx = getCookie(c, OIDC_TX_COOKIE);
-  deleteCookie(c, OIDC_TX_COOKIE, { path: '/auth' });
+  deleteCookie(c, OIDC_TX_COOKIE, { path: '/auth', secure: IS_HTTPS });
 
   if (!code || !state || !rawTx) {
     const redirectErr = new URL(config.WEB_APP_URL);
@@ -74,16 +137,14 @@ authRoutes.get('/callback', async (c) => {
     return c.redirect(redirectErr.toString());
   }
 
-  let tx: OidcTx;
-  try {
-    tx = JSON.parse(Buffer.from(rawTx, 'base64url').toString('utf8')) as OidcTx;
-  } catch {
+  const tx = verifyOidcTx(rawTx);
+  if (!tx) {
     const redirectErr = new URL(config.WEB_APP_URL);
     redirectErr.searchParams.set('auth_error', 'Transacción OIDC corrupta');
     return c.redirect(redirectErr.toString());
   }
 
-  if (tx.state !== state) {
+  if (!timingSafeEqualStrings(tx.state, state)) {
     const redirectErr = new URL(config.WEB_APP_URL);
     redirectErr.searchParams.set('auth_error', 'CSRF state mismatch');
     return c.redirect(redirectErr.toString());
@@ -97,6 +158,12 @@ authRoutes.get('/callback', async (c) => {
       codeVerifier: tx.codeVerifier,
       redirectUri,
     });
+
+    const previousSessionId = getCookie(c, config.SESSION_COOKIE_NAME);
+    if (previousSessionId) {
+      deleteSession(previousSessionId);
+    }
+
     const session = createSession(tokens);
 
     setCookie(c, config.SESSION_COOKIE_NAME, session.id, {
@@ -122,7 +189,7 @@ authRoutes.get('/me', async (c) => {
   const session = await getValidSession(sessionId);
 
   if (!session) {
-    deleteCookie(c, config.SESSION_COOKIE_NAME, { path: '/' });
+    deleteCookie(c, config.SESSION_COOKIE_NAME, { path: '/', secure: IS_HTTPS });
     return c.json({ authenticated: false, user: null }, 401);
   }
 
@@ -137,7 +204,7 @@ authRoutes.get('/me', async (c) => {
 authRoutes.post('/logout', (c) => {
   const sessionId = getCookie(c, config.SESSION_COOKIE_NAME);
   const removed = deleteSession(sessionId);
-  deleteCookie(c, config.SESSION_COOKIE_NAME, { path: '/' });
+  deleteCookie(c, config.SESSION_COOKIE_NAME, { path: '/', secure: IS_HTTPS });
 
   return c.json({
     success: true,

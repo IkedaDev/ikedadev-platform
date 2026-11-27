@@ -41,6 +41,7 @@ export interface ToastApi {
 export interface ToastContextValue {
   toast: ToastApi;
   dismiss: (id: string) => void;
+  clearToasts: () => void;
 }
 
 const ToastContext = createContext<ToastContextValue | null>(null);
@@ -58,6 +59,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       timersRef.current.delete(id);
     }
     setItems((prev) => prev.filter((item) => item.id !== id));
+  }, []);
+
+  const clearToasts = useCallback(() => {
+    for (const timer of timersRef.current.values()) {
+      clearTimeout(timer);
+    }
+    timersRef.current.clear();
+    setItems([]);
   }, []);
 
   const push = useCallback(
@@ -124,7 +133,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const value = useMemo<ToastContextValue>(() => ({ toast, dismiss }), [toast, dismiss]);
+  const value = useMemo<ToastContextValue>(
+    () => ({ toast, dismiss, clearToasts }),
+    [toast, dismiss, clearToasts],
+  );
 
   return (
     <ToastContext.Provider value={value}>

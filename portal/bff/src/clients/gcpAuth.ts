@@ -45,6 +45,7 @@ export async function getGcpIdentityToken(serviceBaseUrl: string): Promise<strin
   const metadataUrl = `${METADATA_BASE}?audience=${encodeURIComponent(audience)}`;
   const res = await fetch(metadataUrl, {
     headers: { 'Metadata-Flavor': 'Google' },
+    signal: AbortSignal.timeout(10_000),
   });
 
   if (!res.ok) {

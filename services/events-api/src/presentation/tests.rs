@@ -325,3 +325,68 @@ async fn test_create_event_exception_via_http() {
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::CREATED);
 }
+
+#[tokio::test]
+async fn test_events_write_requires_events_write_scope_and_enforces_body_limit() {
+    struct MemberOnlyValidator {
+        tenant_id: Uuid,
+    }
+    #[async_trait]
+    impl ApiKeyValidator for MemberOnlyValidator {
+        async fn validate_key_hash(
+            &self,
+            _key_hash: &str,
+        ) -> Result<Option<AuthenticatedKey>, AppError> {
+            Ok(Some(AuthenticatedKey {
+                tenant_id: self.tenant_id,
+                scopes: vec!["tenant:member".into()],
+            }))
+        }
+    }
+
+    let tenant_id = Uuid::new_v4();
+    let state = AppState::new(
+        Arc::new(MockCalendarRepository::default()),
+        Arc::new(PresentationMockEventRepo::default()),
+        Arc::new(MemberOnlyValidator { tenant_id }),
+    );
+    let app = create_router(state);
+
+    // 1. Member without events:write gets 403 on POST /v1/calendars
+    let cmd = CreateCalendarCommand {
+        name: "Blocked".to_string(),
+        timezone: Some("UTC".to_string()),
+        allow_overlaps: Some(false),
+        working_hours: None,
+    };
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/calendars")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(HEADER_API_KEY, "member-key")
+                .body(Body::from(serde_json::to_string(&cmd).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // 2. Oversized body (>256 KiB) returns 413 Payload Too Large
+    let huge = "x".repeat(300 * 1024);
+    let resp413 = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/calendars")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(HEADER_API_KEY, "member-key")
+                .body(Body::from(format!(r#"{{"name":"{huge}"}}"#)))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp413.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}

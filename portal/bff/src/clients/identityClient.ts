@@ -24,7 +24,7 @@ export const identityClient = {
   health: () => http.health(),
 
   getTenant(tenantId: string, opts?: IdentityTenantRequestOptions): Promise<Tenant> {
-    return http.requestData<Tenant>('GET', `/v1/tenants/${tenantId}`, {
+    return http.requestData<Tenant>('GET', `/v1/tenants/${encodeURIComponent(tenantId)}`, {
       ctx: opts?.ctx,
       apiKeyOverride: opts?.apiKeyOverride,
     });
@@ -35,7 +35,7 @@ export const identityClient = {
     cmd: UpdateTenantCommand,
     opts?: IdentityTenantRequestOptions,
   ): Promise<Tenant> {
-    return http.requestData<Tenant>('PATCH', `/v1/tenants/${tenantId}`, {
+    return http.requestData<Tenant>('PATCH', `/v1/tenants/${encodeURIComponent(tenantId)}`, {
       body: cmd,
       ctx: opts?.ctx,
       apiKeyOverride: opts?.apiKeyOverride,
@@ -51,7 +51,7 @@ export const identityClient = {
   },
 
   deleteUser(id: string, ctx?: RequestContext): Promise<void> {
-    return http.request<void>('DELETE', `/v1/users/${id}`, { ctx });
+    return http.request<void>('DELETE', `/v1/users/${encodeURIComponent(id)}`, { ctx });
   },
 
   listApiKeys(ctx?: RequestContext): Promise<ApiKeySummary[]> {
@@ -63,6 +63,6 @@ export const identityClient = {
   },
 
   revokeApiKey(id: string, ctx?: RequestContext): Promise<void> {
-    return http.request<void>('DELETE', `/v1/api-keys/${id}`, { ctx });
+    return http.request<void>('DELETE', `/v1/api-keys/${encodeURIComponent(id)}`, { ctx });
   },
 };

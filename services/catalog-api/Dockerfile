@@ -28,7 +28,7 @@ WORKDIR /app
 
 ENV PORT=8083 \
     HOST=0.0.0.0 \
-    RUST_LOG=info,catalog_api=debug,tower_http=info
+    RUST_LOG=info,sqlx=warn,tower_http=info
 
 COPY --from=builder /app/target/release/catalog-api /app/catalog-api
 COPY --from=builder /app/services/catalog-api/migrations /app/migrations

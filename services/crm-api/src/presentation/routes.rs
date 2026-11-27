@@ -3,6 +3,7 @@ use super::state::AppState;
 use crate::application::use_cases::{CreateClientCommand, UpdateClientCommand};
 use crate::domain::models::Client;
 use axum::{
+    extract::DefaultBodyLimit,
     routing::{get, post},
     Router,
 };
@@ -93,5 +94,6 @@ pub fn create_router(state: AppState) -> Router {
             get(get_client).patch(patch_client).delete(delete_client),
         )
         .merge(SwaggerUi::new("/swagger-ui").url("/openapi.json", ApiDoc::openapi()))
+        .layer(DefaultBodyLimit::max(256 * 1024))
         .with_state(state)
 }

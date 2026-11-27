@@ -7,6 +7,8 @@ pub const DEFAULT_PAGE: u64 = 1;
 pub const DEFAULT_LIMIT: u64 = 20;
 /// Hard limit to protect against oversized database queries.
 pub const MAX_LIMIT: u64 = 100;
+/// Hard cap on SQL `OFFSET` to prevent integer overflow and full-table scan DoS.
+pub const MAX_OFFSET: u64 = 1_000_000;
 
 /// Request pagination specification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -48,10 +50,12 @@ impl Pagination {
         }
     }
 
-    /// Computes the zero-based SQL `OFFSET`.
+    /// Computes the zero-based SQL `OFFSET` safely (saturating and capped at `MAX_OFFSET`).
     #[must_use]
     pub fn offset(&self) -> u64 {
-        (self.page.max(1) - 1) * self.limit.min(MAX_LIMIT)
+        (self.page.max(1) - 1)
+            .saturating_mul(self.sql_limit())
+            .min(MAX_OFFSET)
     }
 
     /// Returns the effective SQL `LIMIT`.

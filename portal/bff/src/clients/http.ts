@@ -30,6 +30,9 @@ export interface HttpClientOptions {
   baseUrl: string;
 }
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+const HEALTH_TIMEOUT_MS = 3_000;
+
 export interface ServiceRequestOptions {
   body?: unknown;
   query?: Record<string, string | number | boolean | undefined | null>;
@@ -41,6 +44,8 @@ export interface ServiceRequestOptions {
    * When omitted, requests strictly forward the user's `Authorization: Bearer <jwt>`.
    */
   apiKeyOverride?: string;
+  /** Optional request timeout in milliseconds (defaults to 15s). */
+  timeoutMs?: number;
 }
 
 export class ServiceHttpClient {
@@ -105,14 +110,23 @@ export class ServiceHttpClient {
       headers['X-Serverless-Authorization'] = `Bearer ${idToken}`;
     }
 
+    const timeoutMs = options?.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     let response: Response;
     try {
       response = await fetch(url.toString(), {
         method,
         headers,
         body: options?.body !== undefined ? JSON.stringify(options.body) : undefined,
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
+      if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+        throw new UpstreamApiError(
+          this.serviceName,
+          504,
+          `Request to ${this.serviceName} timed out after ${timeoutMs}ms`,
+        );
+      }
       const reason = err instanceof Error ? err.message : String(err);
       throw new UpstreamApiError(
         this.serviceName,
@@ -165,7 +179,10 @@ export class ServiceHttpClient {
         const idToken = await getGcpIdentityToken(this.baseUrl);
         headers['X-Serverless-Authorization'] = `Bearer ${idToken}`;
       }
-      const res = await fetch(`${this.baseUrl}/health`, { headers });
+      const res = await fetch(`${this.baseUrl}/health`, {
+        headers,
+        signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
+      });
       return { ok: res.ok, status: res.status };
     } catch {
       return { ok: false, status: 503 };

@@ -9,6 +9,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
+import { useEffect } from 'react';
 import { useTheme } from '../context/ThemeProvider';
 import type { BffHealth, TenantFeatures } from '../types/api';
 import { BrandLogo, Button, useBodyScrollLock } from '../ui';
@@ -75,6 +76,17 @@ export function Sidebar({
   const { branding, features } = settings;
 
   useBodyScrollLock(mobileOpen);
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onCloseMobile();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [mobileOpen, onCloseMobile]);
 
   const displayName = branding.displayName?.trim() || 'Kropy';
   const visibleItems = NAV_ITEMS.filter(

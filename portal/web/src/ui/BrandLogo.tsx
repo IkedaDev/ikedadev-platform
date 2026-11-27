@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { sanitizeLogoUrl } from '../utils/url';
 
 export interface BrandLogoProps {
   logoUrl?: string | null;
@@ -16,20 +17,22 @@ function getInitials(name: string): string {
 export function BrandLogo({ logoUrl, name = 'Kropy', className = 'brand-mark' }: BrandLogoProps) {
   const [imgError, setImgError] = useState(false);
 
+  const safeUrl = sanitizeLogoUrl(logoUrl);
+
   useEffect(() => {
     setImgError(false);
-  }, [logoUrl]);
+  }, [safeUrl]);
 
-  const trimmedUrl = logoUrl?.trim();
   const displayName = name.trim() || 'Kropy';
 
   return (
     <div className={className}>
-      {trimmedUrl && !imgError ? (
+      {safeUrl && !imgError ? (
         <img
-          src={trimmedUrl}
+          src={safeUrl}
           alt={displayName}
           className="brand-logo-img"
+          referrerPolicy="no-referrer"
           onError={() => setImgError(true)}
         />
       ) : (

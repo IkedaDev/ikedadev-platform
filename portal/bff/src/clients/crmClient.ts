@@ -24,7 +24,7 @@ export const crmClient = {
   },
 
   getClient(id: string, ctx?: RequestContext): Promise<Client> {
-    return http.requestData<Client>('GET', `/v1/clients/${id}`, { ctx });
+    return http.requestData<Client>('GET', `/v1/clients/${encodeURIComponent(id)}`, { ctx });
   },
 
   createClient(cmd: CreateClientCommand, ctx?: RequestContext): Promise<Client> {
@@ -32,11 +32,14 @@ export const crmClient = {
   },
 
   updateClient(id: string, cmd: UpdateClientCommand, ctx?: RequestContext): Promise<Client> {
-    return http.requestData<Client>('PATCH', `/v1/clients/${id}`, { body: cmd, ctx });
+    return http.requestData<Client>('PATCH', `/v1/clients/${encodeURIComponent(id)}`, {
+      body: cmd,
+      ctx,
+    });
   },
 
   deleteClient(id: string, ctx?: RequestContext): Promise<void> {
-    return http.request<void>('DELETE', `/v1/clients/${id}`, { ctx });
+    return http.request<void>('DELETE', `/v1/clients/${encodeURIComponent(id)}`, { ctx });
   },
 
   async findByIds(ids: string[], ctx?: RequestContext): Promise<Client[]> {

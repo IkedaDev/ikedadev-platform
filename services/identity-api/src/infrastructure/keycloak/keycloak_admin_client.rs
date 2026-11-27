@@ -162,7 +162,8 @@ impl KeycloakAdminClient {
 
         let mut role_reps = Vec::with_capacity(roles.len());
         for role_name in roles {
-            let role_url = format!("{base}/admin/realms/{realm}/roles/{role_name}");
+            let encoded_role = percent_encode_path_segment(role_name.trim());
+            let role_url = format!("{base}/admin/realms/{realm}/roles/{encoded_role}");
             let resp = self
                 .http
                 .get(&role_url)
@@ -210,6 +211,19 @@ impl KeycloakAdminClient {
 
         Ok(())
     }
+}
+
+fn percent_encode_path_segment(input: &str) -> String {
+    use std::fmt::Write;
+    let mut encoded = String::with_capacity(input.len());
+    for byte in input.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            let _ = write!(encoded, "%{byte:02X}");
+        }
+    }
+    encoded
 }
 
 fn split_full_name(full_name: &str) -> (String, String) {
@@ -298,13 +312,32 @@ impl IdentityProviderPort for KeycloakAdminClient {
             ))
         })?;
 
-        self.assign_realm_roles(&token, keycloak_user_id, &input.roles)
-            .await?;
+        if let Err(err) = self
+            .assign_realm_roles(&token, keycloak_user_id, &input.roles)
+            .await
+        {
+            if let Err(rollback_err) = self.disable_user(keycloak_user_id).await {
+                tracing::error!(
+                    keycloak_user_id = %keycloak_user_id,
+                    error = %rollback_err,
+                    "Compensating Keycloak disable failed after role assignment error"
+                );
+            }
+            return Err(err);
+        }
 
         if input.send_invite_email {
             let actions = vec!["UPDATE_PASSWORD".to_string(), "VERIFY_EMAIL".to_string()];
-            self.trigger_action_email(keycloak_user_id, &actions)
-                .await?;
+            if let Err(err) = self.trigger_action_email(keycloak_user_id, &actions).await {
+                if let Err(rollback_err) = self.disable_user(keycloak_user_id).await {
+                    tracing::error!(
+                        keycloak_user_id = %keycloak_user_id,
+                        error = %rollback_err,
+                        "Compensating Keycloak disable failed after action email error"
+                    );
+                }
+                return Err(err);
+            }
         }
 
         Ok(keycloak_user_id)

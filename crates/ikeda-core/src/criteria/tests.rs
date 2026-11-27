@@ -105,3 +105,33 @@ fn test_deserialize_raw_json_payload() {
     assert_eq!(criteria.pagination.map(|p| p.page), Some(2));
     assert_eq!(criteria.pagination.map(|p| p.offset()), Some(10));
 }
+
+#[test]
+fn test_pagination_overflow_and_bounds_safety() {
+    use super::pagination::{MAX_LIMIT, MAX_OFFSET};
+
+    // Huge page must not panic/overflow and must be capped at MAX_OFFSET
+    let huge = Pagination {
+        page: u64::MAX,
+        limit: 100,
+    };
+    assert_eq!(huge.sql_limit(), MAX_LIMIT);
+    assert_eq!(huge.offset(), MAX_OFFSET);
+
+    // Zero page and zero limit must clamp consistently
+    let zeros = Pagination { page: 0, limit: 0 };
+    assert_eq!(zeros.sql_limit(), 1);
+    assert_eq!(zeros.offset(), 0);
+
+    let page2_zero_limit = Pagination { page: 2, limit: 0 };
+    assert_eq!(page2_zero_limit.sql_limit(), 1);
+    assert_eq!(page2_zero_limit.offset(), 1);
+
+    // Oversized limit must clamp to MAX_LIMIT
+    let huge_limit = Pagination {
+        page: 2,
+        limit: 999_999,
+    };
+    assert_eq!(huge_limit.sql_limit(), MAX_LIMIT);
+    assert_eq!(huge_limit.offset(), MAX_LIMIT);
+}

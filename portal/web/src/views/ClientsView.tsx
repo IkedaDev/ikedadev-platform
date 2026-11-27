@@ -434,6 +434,7 @@ export function ClientsView() {
   const [searchTerm, setSearchTerm] = useState('');
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [busyClientId, setBusyClientId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const dirtyRef = useRef(false);
@@ -518,6 +519,7 @@ export function ClientsView() {
 
   const handleDelete = useCallback(
     async (client: Client) => {
+      if (busyClientId === client.id) return;
       const ok = await confirm({
         title: 'Eliminar cliente',
         message: `¿Estás seguro de eliminar a "${client.full_name}"? Esta acción no se puede deshacer.`,
@@ -526,6 +528,7 @@ export function ClientsView() {
       });
       if (!ok) return;
 
+      setBusyClientId(client.id);
       try {
         await bffClient.deleteClient(client.id);
         toast.success(`Cliente "${client.full_name}" eliminado.`);
@@ -534,9 +537,11 @@ export function ClientsView() {
         if (!(err instanceof BffApiError && err.notified)) {
           toast.error(err instanceof Error ? err.message : 'Error eliminando cliente');
         }
+      } finally {
+        setBusyClientId((prev) => (prev === client.id ? null : prev));
       }
     },
-    [confirm, toast, loadClients, searchTerm, page],
+    [busyClientId, confirm, toast, loadClients, searchTerm, page],
   );
 
   const columns = useMemo<DataTableColumn<Client>[]>(
@@ -627,6 +632,8 @@ export function ClientsView() {
               size="sm"
               icon={<Trash2 size={13} />}
               onClick={() => handleDelete(c)}
+              disabled={busyClientId === c.id}
+              isLoading={busyClientId === c.id}
               aria-label={`Eliminar ${c.full_name}`}
               title="Eliminar"
             />
@@ -634,7 +641,7 @@ export function ClientsView() {
         ),
       },
     ],
-    [openClientProfile, openClientDrawer, handleDelete],
+    [busyClientId, openClientProfile, openClientDrawer, handleDelete],
   );
 
   return (

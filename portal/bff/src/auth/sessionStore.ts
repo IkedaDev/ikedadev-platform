@@ -30,11 +30,23 @@ interface KeycloakTokenResponse {
 
 const SESSION_MAX_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours (aligned with cookie maxAge)
 const SESSION_CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // Sweep every 5 minutes
+export const MAX_SESSIONS = 10_000;
+const KEYCLOAK_TIMEOUT_MS = 10_000;
+const KEYCLOAK_HEALTH_TIMEOUT_MS = 3_000;
 
 // Note: In a multi-replica production deployment, back this store with Redis.
 const sessions = new Map<string, BffSession>();
 // Deduplicate concurrent refresh requests for the same session to avoid token-rotation races.
 const inflightRefreshes = new Map<string, Promise<BffSession | null>>();
+
+export function getSessionCount(): number {
+  return sessions.size;
+}
+
+export function clearAllSessionsForTest(): void {
+  sessions.clear();
+  inflightRefreshes.clear();
+}
 
 export function pruneExpiredSessions(now = Date.now()): number {
   let removed = 0;
@@ -164,6 +176,7 @@ export async function exchangeCodeForTokens(params: {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: form.toString(),
+    signal: AbortSignal.timeout(KEYCLOAK_TIMEOUT_MS),
   });
 
   if (!res.ok) {
@@ -192,6 +205,7 @@ export async function refreshSessionTokens(session: BffSession): Promise<BffSess
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: form.toString(),
+      signal: AbortSignal.timeout(KEYCLOAK_TIMEOUT_MS),
     });
 
     if (!res.ok) {
@@ -200,6 +214,12 @@ export async function refreshSessionTokens(session: BffSession): Promise<BffSess
     }
 
     const tokens = (await res.json()) as KeycloakTokenResponse;
+
+    // Prevent resurrecting a session that was explicitly logged out while refresh was in flight
+    if (!sessions.has(session.id)) {
+      return null;
+    }
+
     const now = Date.now();
     const refreshTtlMs =
       typeof tokens.refresh_expires_in === 'number' && tokens.refresh_expires_in > 0
@@ -222,9 +242,24 @@ export async function refreshSessionTokens(session: BffSession): Promise<BffSess
   }
 }
 
-export function createSession(tokens: KeycloakTokenResponse): BffSession {
+export function createSession(
+  tokens: KeycloakTokenResponse,
+  options?: { maxSessions?: number },
+): BffSession {
   const id = generateRandomUrlSafe(32);
   const now = Date.now();
+  const maxSessions = options?.maxSessions ?? MAX_SESSIONS;
+
+  if (sessions.size >= maxSessions) {
+    pruneExpiredSessions(now);
+  }
+  while (sessions.size >= maxSessions) {
+    const oldestKey = sessions.keys().next().value;
+    if (oldestKey === undefined) break;
+    sessions.delete(oldestKey);
+    inflightRefreshes.delete(oldestKey);
+  }
+
   const refreshTtlMs =
     typeof tokens.refresh_expires_in === 'number' && tokens.refresh_expires_in > 0
       ? tokens.refresh_expires_in * 1000
@@ -260,7 +295,9 @@ export async function getValidSession(sessionId: string | undefined): Promise<Bf
       return existingRefresh;
     }
     const refreshPromise = refreshSessionTokens(session).finally(() => {
-      inflightRefreshes.delete(sessionId);
+      if (inflightRefreshes.get(sessionId) === refreshPromise) {
+        inflightRefreshes.delete(sessionId);
+      }
     });
     inflightRefreshes.set(sessionId, refreshPromise);
     return refreshPromise;
@@ -282,7 +319,10 @@ export async function checkKeycloakHealth(): Promise<{ ok: boolean; status: numb
     const base = config.KEYCLOAK_INTERNAL_URL.replace(/\/+$/, '');
     const res = await fetch(
       `${base}/realms/${config.KEYCLOAK_REALM}/.well-known/openid-configuration`,
-      { headers: { Accept: 'application/json' } },
+      {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(KEYCLOAK_HEALTH_TIMEOUT_MS),
+      },
     );
     return { ok: res.ok, status: res.status };
   } catch {

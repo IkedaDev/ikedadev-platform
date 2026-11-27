@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { bffClient } from '../api/bffClient';
+import { sanitizeLogoUrl } from '../utils/url';
 import type {
   TenantBranding,
   TenantSettings,
@@ -56,7 +57,7 @@ export interface ThemeContextValue {
   resetToKropy: () => void;
   clearTenantState: () => void;
   applyPreview: (partialBranding: Partial<TenantBranding> | null) => void;
-  reloadSettings: () => Promise<void>;
+  reloadSettings: (opts?: { allowUnauthenticated?: boolean }) => Promise<void>;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -130,11 +131,14 @@ function getSystemDark(): boolean {
 }
 
 function mergeSettings(raw?: Partial<TenantSettings>): TenantSettings {
+  const mergedBranding = {
+    ...KROPY_DEFAULT_SETTINGS.branding,
+    ...(raw?.branding ?? {}),
+  };
+  mergedBranding.logoUrl = sanitizeLogoUrl(mergedBranding.logoUrl) ?? '';
+
   return {
-    branding: {
-      ...KROPY_DEFAULT_SETTINGS.branding,
-      ...(raw?.branding ?? {}),
-    },
+    branding: mergedBranding,
     locale: {
       ...KROPY_DEFAULT_SETTINGS.locale,
       ...(raw?.locale ?? {}),
@@ -218,10 +222,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return () => mq.removeEventListener('change', handler);
   }, []);
 
-  const reloadSettings = useCallback(async () => {
+  const reloadSettings = useCallback(async (opts?: { allowUnauthenticated?: boolean }) => {
     setIsLoading(true);
     try {
-      const res = await bffClient.getSettings({ silent: true });
+      const res = await bffClient.getSettings({
+        silent: true,
+        skipUnauthorizedHandler: opts?.allowUnauthenticated,
+      });
       const merged = mergeSettings(res.settings);
       setSettings(merged);
       setTenantMeta({
@@ -238,9 +245,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       if (slug) {
         try {
           const pub = await bffClient.getPublicBranding(slug);
-          setSettings((prev) =>
+          setSettings(
             mergeSettings({
-              ...prev,
               branding: { ...KROPY_DEFAULT_BRANDING, ...pub.branding },
             }),
           );
@@ -254,7 +260,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    void reloadSettings();
+    void reloadSettings({ allowUnauthenticated: true });
   }, [reloadSettings]);
 
   const effectiveBranding = useMemo<TenantBranding>(

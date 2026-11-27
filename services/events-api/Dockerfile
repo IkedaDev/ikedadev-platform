@@ -40,7 +40,7 @@ RUN useradd -u 10001 -U -s /bin/sh appuser
 
 ENV PORT=8080 \
     HOST=0.0.0.0 \
-    RUST_LOG=info,events_api=debug,tower_http=info
+    RUST_LOG=info,sqlx=warn,tower_http=info
 
 COPY --from=builder /app/target/release/events-api /app/events-api
 COPY --from=builder /app/services/events-api/migrations /app/migrations

@@ -1,3 +1,4 @@
+use super::item_handlers::require_catalog_write;
 use super::state::AppState;
 use crate::application::use_cases::{
     CreateVariantCommand, CreateVariantUseCase, DeleteVariantUseCase, UpdateVariantCommand,
@@ -38,6 +39,7 @@ pub async fn create_variant(
     Path(id): Path<Uuid>,
     Json(cmd): Json<CreateVariantCommand>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_catalog_write(&tenant)?;
     let uc = CreateVariantUseCase::new(state.item_repo.clone());
     let variant = uc.execute(tenant.tenant_id, id, cmd).await?;
     Ok((
@@ -73,6 +75,7 @@ pub async fn patch_variant(
     Path((id, variant_id)): Path<(Uuid, Uuid)>,
     Json(cmd): Json<UpdateVariantCommand>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_catalog_write(&tenant)?;
     let uc = UpdateVariantUseCase::new(state.item_repo.clone());
     let updated = uc.execute(tenant.tenant_id, id, variant_id, cmd).await?;
     Ok(Json(ApiResponse::ok(updated)))
@@ -98,6 +101,7 @@ pub async fn delete_variant(
     tenant: TenantContext,
     Path((id, variant_id)): Path<(Uuid, Uuid)>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_catalog_write(&tenant)?;
     let uc = DeleteVariantUseCase::new(state.item_repo.clone());
     uc.execute(tenant.tenant_id, id, variant_id).await?;
     Ok(Json(ApiResponse::message("Variant deleted successfully")))

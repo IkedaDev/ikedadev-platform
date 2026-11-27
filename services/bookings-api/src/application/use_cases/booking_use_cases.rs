@@ -195,11 +195,22 @@ impl CreateBookingUseCase {
             deleted_at: None,
         };
 
+        let trimmed_idem_key = idempotency_key.map(str::trim).filter(|k| !k.is_empty());
+        if let Some(key) = trimmed_idem_key {
+            if key.len() > 255 {
+                return Err(AppError::validation(
+                    "Invalid Idempotency-Key header",
+                    [ValidationErrorDetail::new(
+                        "Idempotency-Key",
+                        "Idempotency-Key must be at most 255 characters",
+                    )
+                    .with_code("max_length")],
+                ));
+            }
+        }
+
         let expires_at = now + Duration::hours(24);
-        let idempotency = idempotency_key
-            .map(str::trim)
-            .filter(|k| !k.is_empty())
-            .map(|k| (k, request_hash.as_str(), expires_at));
+        let idempotency = trimmed_idem_key.map(|k| (k, request_hash.as_str(), expires_at));
 
         self.repo
             .create_with_idempotency(tenant_id, &booking, idempotency)
@@ -248,6 +259,7 @@ impl UpdateBookingUseCase {
             .await?
             .ok_or_else(|| AppError::NotFound(format!("Booking with ID '{id}' not found")))?;
 
+        let expected_status = booking.status;
         if booking.status.is_terminal() {
             return Err(AppError::Conflict(format!(
                 "Cannot edit booking '{}' because its status is terminal ({})",
@@ -300,7 +312,9 @@ impl UpdateBookingUseCase {
         booking.updated_by = actor_user_id;
         booking.updated_at = now;
 
-        self.repo.update(tenant_id, &booking, replace_items).await
+        self.repo
+            .update(tenant_id, &booking, expected_status, replace_items)
+            .await
     }
 }
 
@@ -327,6 +341,7 @@ impl TransitionBookingStatusUseCase {
             .await?
             .ok_or_else(|| AppError::NotFound(format!("Booking with ID '{id}' not found")))?;
 
+        let expected_status = booking.status;
         if !booking.status.can_transition_to(cmd.status) {
             return Err(AppError::Conflict(format!(
                 "Invalid booking status transition from {} to {}",
@@ -365,7 +380,9 @@ impl TransitionBookingStatusUseCase {
         booking.updated_by = actor_user_id;
         booking.updated_at = now;
 
-        self.repo.update(tenant_id, &booking, false).await
+        self.repo
+            .update(tenant_id, &booking, expected_status, false)
+            .await
     }
 }
 

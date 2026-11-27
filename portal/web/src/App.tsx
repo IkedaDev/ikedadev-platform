@@ -5,7 +5,8 @@ import { AppLayout } from './components/AppLayout';
 import { NAV_ITEMS, type NavSection } from './components/Sidebar';
 import { useTheme } from './context/ThemeProvider';
 import type { AuthUser, BffHealth } from './types/api';
-import { Skeleton, useModal } from './ui';
+import { Skeleton, useDrawer, useModal, useToast } from './ui';
+import { isSafeRedirectUrl } from './utils/url';
 import { BookingsView } from './views/BookingsView';
 import { CatalogView } from './views/CatalogView';
 import { ClientsView } from './views/ClientsView';
@@ -17,7 +18,9 @@ import { TelemetryView } from './views/TelemetryView';
 
 export function App() {
   const { settings, reloadSettings, clearTenantState } = useTheme();
-  const { confirm } = useModal();
+  const { confirm, clearModals } = useModal();
+  const { closeDrawer } = useDrawer();
+  const { clearToasts } = useToast();
   const [section, setSection] = useState<NavSection>('dashboard');
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
@@ -33,6 +36,9 @@ export function App() {
    */
   const clearClientSessionState = useCallback(() => {
     settingsDirtyRef.current = false;
+    closeDrawer(true);
+    clearModals();
+    clearToasts();
     setSection('dashboard');
     setUser(null);
     tracker.reset();
@@ -47,7 +53,7 @@ export function App() {
       // ignore storage errors
     }
     clearTenantState();
-  }, [clearTenantState]);
+  }, [clearTenantState, closeDrawer, clearModals, clearToasts]);
 
   useEffect(() => {
     return registerUnauthorizedHandler(() => {
@@ -150,7 +156,7 @@ export function App() {
     try {
       const res = await bffClient.logout();
       clearClientSessionState();
-      if (res.logoutUrl) {
+      if (res.logoutUrl && isSafeRedirectUrl(res.logoutUrl)) {
         window.location.href = res.logoutUrl;
         return;
       }

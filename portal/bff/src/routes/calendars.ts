@@ -21,10 +21,12 @@ calendarsRoutes.get('/', async (c) => {
   return c.json({ success: true, data: calendars });
 });
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // POST /api/calendars
 calendarsRoutes.post('/', async (c) => {
   const ctx = getCtx(c);
-  const raw = await c.req.json();
+  const raw = await c.req.json().catch(() => null);
   const parsed = createCalendarSchema.safeParse(raw);
   if (!parsed.success) {
     return c.json(
@@ -44,6 +46,16 @@ calendarsRoutes.post('/', async (c) => {
 calendarsRoutes.get('/:id/availability', async (c) => {
   const ctx = getCtx(c);
   const id = c.req.param('id');
+  if (!UUID_REGEX.test(id)) {
+    return c.json(
+      {
+        success: false,
+        code: 'VALIDATION_ERROR',
+        message: 'id debe ser un UUID válido',
+      },
+      422,
+    );
+  }
 
   const starts_at = c.req.query('starts_at') || c.req.query('start');
   const ends_at = c.req.query('ends_at') || c.req.query('end');

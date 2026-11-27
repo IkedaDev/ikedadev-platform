@@ -1,3 +1,4 @@
+use super::item_handlers::require_catalog_write;
 use super::state::AppState;
 use crate::application::use_cases::{
     CreateCategoryCommand, CreateCategoryUseCase, DeleteCategoryUseCase, ListCategoriesUseCase,
@@ -33,6 +34,7 @@ pub async fn create_category(
     tenant: TenantContext,
     Json(cmd): Json<CreateCategoryCommand>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_catalog_write(&tenant)?;
     let uc = CreateCategoryUseCase::new(state.category_repo.clone());
     let category = uc.execute(tenant.tenant_id, cmd).await?;
     Ok((
@@ -86,6 +88,7 @@ pub async fn patch_category(
     Path(id): Path<Uuid>,
     Json(cmd): Json<UpdateCategoryCommand>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_catalog_write(&tenant)?;
     let uc = UpdateCategoryUseCase::new(state.category_repo.clone());
     let updated = uc.execute(tenant.tenant_id, id, cmd).await?;
     Ok(Json(ApiResponse::ok(updated)))
@@ -110,6 +113,7 @@ pub async fn delete_category(
     tenant: TenantContext,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_catalog_write(&tenant)?;
     let uc = DeleteCategoryUseCase::new(state.category_repo.clone());
     uc.execute(tenant.tenant_id, id).await?;
     Ok(Json(ApiResponse::message("Category deleted successfully")))

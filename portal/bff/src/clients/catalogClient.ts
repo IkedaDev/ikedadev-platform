@@ -32,11 +32,14 @@ export const catalogClient = {
     cmd: UpdateCategoryCommand,
     ctx?: RequestContext,
   ): Promise<Category> {
-    return http.requestData<Category>('PATCH', `/v1/categories/${id}`, { body: cmd, ctx });
+    return http.requestData<Category>('PATCH', `/v1/categories/${encodeURIComponent(id)}`, {
+      body: cmd,
+      ctx,
+    });
   },
 
   deleteCategory(id: string, ctx?: RequestContext): Promise<void> {
-    return http.request<void>('DELETE', `/v1/categories/${id}`, { ctx });
+    return http.request<void>('DELETE', `/v1/categories/${encodeURIComponent(id)}`, { ctx });
   },
 
   searchItems(criteria: Criteria, ctx?: RequestContext): Promise<PaginatedApiResponse<CatalogItem>> {
@@ -47,7 +50,7 @@ export const catalogClient = {
   },
 
   getItem(id: string, ctx?: RequestContext): Promise<CatalogItem> {
-    return http.requestData<CatalogItem>('GET', `/v1/items/${id}`, { ctx });
+    return http.requestData<CatalogItem>('GET', `/v1/items/${encodeURIComponent(id)}`, { ctx });
   },
 
   async batchGetItems(ids: string[], ctx?: RequestContext): Promise<CatalogItem[]> {
@@ -68,10 +71,13 @@ export const catalogClient = {
     cmd: UpdateCatalogItemCommand,
     ctx?: RequestContext,
   ): Promise<CatalogItem> {
-    return http.requestData<CatalogItem>('PATCH', `/v1/items/${id}`, { body: cmd, ctx });
+    return http.requestData<CatalogItem>('PATCH', `/v1/items/${encodeURIComponent(id)}`, {
+      body: cmd,
+      ctx,
+    });
   },
 
   deleteItem(id: string, ctx?: RequestContext): Promise<void> {
-    return http.request<void>('DELETE', `/v1/items/${id}`, { ctx });
+    return http.request<void>('DELETE', `/v1/items/${encodeURIComponent(id)}`, { ctx });
   },
 };

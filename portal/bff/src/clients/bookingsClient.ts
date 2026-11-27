@@ -29,7 +29,9 @@ export const bookingsClient = {
   },
 
   getBooking(id: string, ctx?: RequestContext): Promise<BookingRecord> {
-    return http.requestData<BookingRecord>('GET', `/v1/bookings/${id}`, { ctx });
+    return http.requestData<BookingRecord>('GET', `/v1/bookings/${encodeURIComponent(id)}`, {
+      ctx,
+    });
   },
 
   searchBookings(
@@ -47,13 +49,17 @@ export const bookingsClient = {
     cmd: TransitionBookingStatusPayload,
     ctx?: RequestContext,
   ): Promise<BookingRecord> {
-    return http.requestData<BookingRecord>('PATCH', `/v1/bookings/${id}/status`, {
-      body: cmd,
-      ctx,
-    });
+    return http.requestData<BookingRecord>(
+      'PATCH',
+      `/v1/bookings/${encodeURIComponent(id)}/status`,
+      {
+        body: cmd,
+        ctx,
+      },
+    );
   },
 
   deleteBooking(id: string, ctx?: RequestContext): Promise<void> {
-    return http.request<void>('DELETE', `/v1/bookings/${id}`, { ctx });
+    return http.request<void>('DELETE', `/v1/bookings/${encodeURIComponent(id)}`, { ctx });
   },
 };

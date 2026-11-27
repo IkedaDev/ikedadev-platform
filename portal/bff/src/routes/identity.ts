@@ -24,6 +24,8 @@ function isTenantAdmin(roles: string[] | undefined): boolean {
   return roles.includes('tenant:admin') || roles.includes('platform:admin');
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export const identityRoutes = new Hono();
 
 // GET /api/identity/users
@@ -46,7 +48,7 @@ identityRoutes.post('/users', async (c) => {
       403,
     );
   }
-  const raw = await c.req.json();
+  const raw = await c.req.json().catch(() => null);
   const parsed = createUserSchema.safeParse(raw);
   if (!parsed.success) {
     return c.json(
@@ -76,6 +78,16 @@ identityRoutes.delete('/users/:id', async (c) => {
     );
   }
   const id = c.req.param('id');
+  if (!UUID_REGEX.test(id)) {
+    return c.json(
+      {
+        success: false,
+        code: 'VALIDATION_ERROR',
+        message: 'id debe ser un UUID válido',
+      },
+      422,
+    );
+  }
   await identityClient.deleteUser(id, ctx);
   return c.json({ success: true, message: 'Usuario deshabilitado y eliminado' });
 });
@@ -110,7 +122,7 @@ identityRoutes.post('/api-keys', async (c) => {
       403,
     );
   }
-  const raw = await c.req.json();
+  const raw = await c.req.json().catch(() => null);
   const parsed = createApiKeySchema.safeParse(raw);
   if (!parsed.success) {
     return c.json(
@@ -140,6 +152,16 @@ identityRoutes.delete('/api-keys/:id', async (c) => {
     );
   }
   const id = c.req.param('id');
+  if (!UUID_REGEX.test(id)) {
+    return c.json(
+      {
+        success: false,
+        code: 'VALIDATION_ERROR',
+        message: 'id debe ser un UUID válido',
+      },
+      422,
+    );
+  }
   await identityClient.revokeApiKey(id, ctx);
   return c.json({ success: true, message: 'API Key revocada' });
 });

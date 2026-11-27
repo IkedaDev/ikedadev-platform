@@ -12,6 +12,15 @@ pub const MAX_FILTER_DEPTH: usize = 10;
 /// Maximum length allowed for JSONB `metadata.<key>` identifiers.
 pub const MAX_METADATA_KEY_LEN: usize = 64;
 
+/// Maximum number of elements allowed in `IN` / `NOT IN` filter arrays.
+pub const MAX_IN_VALUES: usize = 100;
+
+/// Maximum total number of filter rules/conditions allowed across a recursive `FilterGroup`.
+pub const MAX_TOTAL_CONDITIONS: usize = 50;
+
+/// Maximum number of `ORDER BY` clauses allowed in a single query.
+pub const MAX_ORDER_BY_FIELDS: usize = 5;
+
 /// PostgreSQL column type used to safely validate and bind `Criteria` values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnKind {
@@ -77,7 +86,8 @@ pub fn append_filter_group<'a, F>(
 where
     F: Fn(&str) -> Result<ResolvedField, AppError>,
 {
-    append_filter_group_with_depth(qb, group, resolver, 0)
+    let mut total_conditions = 0usize;
+    append_filter_group_with_depth(qb, group, resolver, 0, &mut total_conditions)
 }
 
 fn append_filter_group_with_depth<'a, F>(
@@ -85,6 +95,7 @@ fn append_filter_group_with_depth<'a, F>(
     group: &'a FilterGroup,
     resolver: &F,
     depth: usize,
+    total_conditions: &mut usize,
 ) -> Result<(), AppError>
 where
     F: Fn(&str) -> Result<ResolvedField, AppError>,
@@ -110,10 +121,16 @@ where
         if idx > 0 {
             qb.push(conjunction);
         }
+        *total_conditions += 1;
+        if *total_conditions > MAX_TOTAL_CONDITIONS {
+            return Err(AppError::BadRequest(format!(
+                "Filter exceeds maximum allowed rule count of {MAX_TOTAL_CONDITIONS}"
+            )));
+        }
         match rule {
             FilterRule::Condition(cond) => append_condition(qb, cond, resolver)?,
             FilterRule::Group(nested) => {
-                append_filter_group_with_depth(qb, nested, resolver, depth + 1)?;
+                append_filter_group_with_depth(qb, nested, resolver, depth + 1, total_conditions)?;
             }
         }
     }
@@ -184,6 +201,12 @@ where
                     cond.operator, cond.field
                 ))
             })?;
+            if arr.len() > MAX_IN_VALUES {
+                return Err(AppError::BadRequest(format!(
+                    "Operator {:?} exceeds maximum allowed array size of {MAX_IN_VALUES} for field '{}'",
+                    cond.operator, cond.field
+                )));
+            }
             if arr.is_empty() {
                 qb.push(if cond.operator == FilterOperator::In {
                     "FALSE"
@@ -319,6 +342,12 @@ where
         return Ok(());
     }
 
+    if order_by.len() > MAX_ORDER_BY_FIELDS {
+        return Err(AppError::BadRequest(format!(
+            "ORDER BY exceeds maximum allowed field count of {MAX_ORDER_BY_FIELDS}"
+        )));
+    }
+
     qb.push(" ORDER BY ");
     for (idx, ord) in order_by.iter().enumerate() {
         if idx > 0 {
@@ -396,6 +425,54 @@ mod tests {
 
         let mut qb: QueryBuilder<'_, Postgres> = QueryBuilder::new("SELECT 1 WHERE ");
         let res = append_filter_group(&mut qb, &group, &test_resolver);
+        assert!(matches!(res, Err(AppError::BadRequest(_))));
+    }
+
+    #[test]
+    fn test_rejects_oversized_in_array() {
+        let values: Vec<serde_json::Value> = (0..=MAX_IN_VALUES)
+            .map(|i| json!(format!("item-{i}")))
+            .collect();
+        let group = FilterGroup::And(vec![FilterRule::Condition(FilterCondition {
+            field: "name".to_string(),
+            operator: FilterOperator::In,
+            value: serde_json::Value::Array(values),
+        })]);
+
+        let mut qb: QueryBuilder<'_, Postgres> = QueryBuilder::new("SELECT 1 WHERE ");
+        let res = append_filter_group(&mut qb, &group, &test_resolver);
+        assert!(matches!(res, Err(AppError::BadRequest(_))));
+    }
+
+    #[test]
+    fn test_rejects_excessive_total_filter_rules() {
+        let rules: Vec<FilterRule> = (0..=MAX_TOTAL_CONDITIONS)
+            .map(|_| {
+                FilterRule::Condition(FilterCondition {
+                    field: "is_active".to_string(),
+                    operator: FilterOperator::Eq,
+                    value: json!(true),
+                })
+            })
+            .collect();
+        let group = FilterGroup::And(rules);
+
+        let mut qb: QueryBuilder<'_, Postgres> = QueryBuilder::new("SELECT 1 WHERE ");
+        let res = append_filter_group(&mut qb, &group, &test_resolver);
+        assert!(matches!(res, Err(AppError::BadRequest(_))));
+    }
+
+    #[test]
+    fn test_rejects_excessive_order_by_fields() {
+        let order_by: Vec<OrderBy> = (0..=MAX_ORDER_BY_FIELDS)
+            .map(|_| OrderBy {
+                field: "name".to_string(),
+                direction: OrderDirection::Asc,
+            })
+            .collect();
+
+        let mut qb: QueryBuilder<'_, Postgres> = QueryBuilder::new("SELECT 1");
+        let res = append_order_by(&mut qb, &order_by, "name DESC", &test_resolver);
         assert!(matches!(res, Err(AppError::BadRequest(_))));
     }
 }

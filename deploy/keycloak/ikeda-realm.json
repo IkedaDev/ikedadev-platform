@@ -1,7 +1,7 @@
 {
   "realm": "ikeda",
   "enabled": true,
-  "displayName": "IkedaDev Platform",
+  "displayName": "IkedaDev Platform (LOCAL DEV ONLY — do not import into prod)",
   "sslRequired": "none",
   "registrationAllowed": false,
   "loginWithEmailAllowed": true,

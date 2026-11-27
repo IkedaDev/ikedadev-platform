@@ -219,6 +219,8 @@ En **GitHub → Settings → Environments**, crea dos entornos: **`qa`** (rama `
 | `PLATFORM_ADMIN_API_KEY` | *(Opcional)* API key de plataforma usada exclusivamente por `/api/settings` y `/api/branding/:slug` en `portal/bff` para leer/actualizar `tenants.config` del tenant autenticado en `identity-api` (sin exponer `TENANT_API_KEY` estática) |
 | `QSTASH_TOKEN` | Token de Upstash QStash (opcional) |
 
+> **Recomendación de hardening para Producción (GCP Secret Manager):** Los workflows actuales inyectan los secretos vía `--set-env-vars` para mantener costo fijo **$0** en entornos `qa`/free-tier. En `prod`, se recomienda migrar las credenciales sensibles (`*_DATABASE_URL`, `KEYCLOAK_*_SECRET`, `PLATFORM_ADMIN_API_KEY`) a **Google Cloud Secret Manager**, otorgar `roles/secretmanager.secretAccessor` por secreto a `platform-api-runtime` / `bff-invoker`, y montar los valores con `--set-secrets` en lugar de variables de entorno en texto plano (evitando exposición a principals con `roles/viewer` o `run.services.get`).
+
 ---
 
 ## Paso 6: Configuración de Cloudflare (Pages + Subdominios + WAF)

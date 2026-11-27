@@ -11,7 +11,7 @@ set -euo pipefail
 #   - Least-privilege Service Accounts:
 #       * github-deployer      (artifactregistry.writer, run.developer, iam.serviceAccountUser)
 #       * bff-invoker          (project-level roles/run.invoker for private Rust APIs)
-#       * platform-api-runtime (zero admin roles; runtime SA for the 5 Rust APIs)
+#       * platform-api-runtime (zero admin roles; runtime SA for the 6 Rust APIs)
 #   - Pub/Sub topic `billing-alerts` for the automated Billing Kill Switch
 #
 # Usage:
@@ -168,11 +168,9 @@ Add these values to GitHub Repository -> Settings -> Secrets and variables -> Ac
     GCP_AR_REPO                    = ${AR_REPO}
     GCP_WORKLOAD_IDENTITY_PROVIDER = ${WIF_PROVIDER_FULL}
     GCP_SERVICE_ACCOUNT            = ${DEPLOYER_SA_EMAIL}
-    GCP_RUNTIME_SERVICE_ACCOUNT    = ${RUNTIME_SA_EMAIL}
-    GCP_BFF_SERVICE_ACCOUNT        = ${BFF_INVOKER_SA_EMAIL}
     GCP_DEPLOY_ENABLED             = true   (set only when ready to deploy)
 
-  Created Service Accounts:
+  Created Service Accounts (derived automatically by workflows from GCP_PROJECT_ID):
     Deployer: ${DEPLOYER_SA_EMAIL}
     Runtime:  ${RUNTIME_SA_EMAIL}
     BFF:      ${BFF_INVOKER_SA_EMAIL}

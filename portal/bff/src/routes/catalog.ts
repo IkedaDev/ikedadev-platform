@@ -106,6 +106,8 @@ const updateItemSchema = z.object({
 
 import { getAuthRequestContext as getCtx } from '../middleware/auth.js';
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export const categoriesRoutes = new Hono();
 
 // GET /api/categories
@@ -118,7 +120,7 @@ categoriesRoutes.get('/', async (c) => {
 // POST /api/categories
 categoriesRoutes.post('/', async (c) => {
   const ctx = getCtx(c);
-  const raw = await c.req.json();
+  const raw = await c.req.json().catch(() => null);
   const parsed = createCategorySchema.safeParse(raw);
   if (!parsed.success) {
     return c.json(
@@ -138,6 +140,16 @@ categoriesRoutes.post('/', async (c) => {
 categoriesRoutes.patch('/:id', async (c) => {
   const ctx = getCtx(c);
   const id = c.req.param('id');
+  if (!UUID_REGEX.test(id)) {
+    return c.json(
+      {
+        success: false,
+        code: 'VALIDATION_ERROR',
+        message: 'id debe ser un UUID válido',
+      },
+      422,
+    );
+  }
   const raw = await c.req.json().catch(() => null);
   const parsed = updateCategorySchema.safeParse(raw);
   if (!parsed.success) {
@@ -174,6 +186,16 @@ categoriesRoutes.patch('/:id', async (c) => {
 categoriesRoutes.delete('/:id', async (c) => {
   const ctx = getCtx(c);
   const id = c.req.param('id');
+  if (!UUID_REGEX.test(id)) {
+    return c.json(
+      {
+        success: false,
+        code: 'VALIDATION_ERROR',
+        message: 'id debe ser un UUID válido',
+      },
+      422,
+    );
+  }
   await catalogClient.deleteCategory(id, ctx);
   return c.json({ success: true, message: 'Categoría eliminada' });
 });
@@ -191,7 +213,7 @@ itemsRoutes.post('/search', async (c) => {
 // POST /api/items
 itemsRoutes.post('/', async (c) => {
   const ctx = getCtx(c);
-  const raw = await c.req.json();
+  const raw = await c.req.json().catch(() => null);
   const parsed = createItemSchema.safeParse(raw);
   if (!parsed.success) {
     return c.json(
@@ -228,7 +250,17 @@ itemsRoutes.post('/', async (c) => {
 itemsRoutes.patch('/:id', async (c) => {
   const ctx = getCtx(c);
   const id = c.req.param('id');
-  const raw = await c.req.json();
+  if (!UUID_REGEX.test(id)) {
+    return c.json(
+      {
+        success: false,
+        code: 'VALIDATION_ERROR',
+        message: 'id debe ser un UUID válido',
+      },
+      422,
+    );
+  }
+  const raw = await c.req.json().catch(() => null);
   const parsed = updateItemSchema.safeParse(raw);
   if (!parsed.success) {
     return c.json(
@@ -301,6 +333,16 @@ itemsRoutes.patch('/:id', async (c) => {
 itemsRoutes.delete('/:id', async (c) => {
   const ctx = getCtx(c);
   const id = c.req.param('id');
+  if (!UUID_REGEX.test(id)) {
+    return c.json(
+      {
+        success: false,
+        code: 'VALIDATION_ERROR',
+        message: 'id debe ser un UUID válido',
+      },
+      422,
+    );
+  }
   await catalogClient.deleteItem(id, ctx);
   telemetryClient.emitAuditEventAsync(
     {

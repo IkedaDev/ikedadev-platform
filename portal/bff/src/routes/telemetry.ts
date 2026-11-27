@@ -74,8 +74,11 @@ telemetryRoutes.post('/track', async (c) => {
 
   const events: IngestTelemetryEventPayload[] = parsed.data.events.map((ev) => ({
     ...ev,
-    actor_id: ev.actor_id ?? validActorId,
-    request_id: ev.request_id ?? ctx.requestId ?? null,
+    // Strictly enforce TRACKING kind, server-derived actor_id & request_id, and prevent 'bff' source spoofing
+    kind: 'TRACKING',
+    source: ev.source.toLowerCase() === 'bff' ? 'web' : ev.source,
+    actor_id: validActorId,
+    request_id: ctx.requestId ?? null,
   }));
 
   const result = await telemetryClient.ingestBatch(events, ctx);
@@ -139,6 +142,16 @@ telemetryRoutes.get('/metrics', async (c) => {
 telemetryRoutes.get('/clients/:clientId/timeline', async (c) => {
   const ctx = getCtx(c);
   const clientId = c.req.param('clientId');
+  if (!UUID_REGEX.test(clientId)) {
+    return c.json(
+      {
+        success: false,
+        code: 'VALIDATION_ERROR',
+        message: 'clientId debe ser un UUID válido',
+      },
+      422,
+    );
+  }
   const page = parsePositiveInt(c.req.query('page'), 1, 1000);
   const limit = parsePositiveInt(c.req.query('limit'), 25, 100);
   const kind = parseKind(c.req.query('kind'));

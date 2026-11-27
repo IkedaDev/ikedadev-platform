@@ -26,6 +26,20 @@ use uuid::Uuid;
 /// Header name constant for request idempotency.
 pub const HEADER_IDEMPOTENCY_KEY: &str = "idempotency-key";
 
+pub(crate) fn require_events_write(ctx: &TenantContext) -> Result<(), AppError> {
+    if ctx.has_scope("events:write")
+        || ctx.has_scope("tenant:admin")
+        || ctx.has_scope("platform:admin")
+    {
+        Ok(())
+    } else {
+        Err(AppError::Forbidden(
+            "Missing required scope: 'events:write', 'tenant:admin', or 'platform:admin'"
+                .to_string(),
+        ))
+    }
+}
+
 /// Query parameters for fetching events within a date range.
 #[derive(Debug, Clone, Deserialize, IntoParams, ToSchema)]
 pub struct EventQueryParams {
@@ -86,6 +100,7 @@ pub async fn create_event(
     headers: HeaderMap,
     Json(mut cmd): Json<CreateEventCommand>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_events_write(&tenant)?;
     // Idempotency: inspect Idempotency-Key header and bind to external_resource_id if unassigned
     if cmd.external_resource_id.is_none() {
         if let Some(idempotency_val) = headers.get(HEADER_IDEMPOTENCY_KEY) {
@@ -162,18 +177,24 @@ pub async fn search_events(
         .find_by_criteria(tenant.tenant_id, req.calendar_id, &criteria)
         .await?;
 
+    let recurring_ids: Vec<Uuid> = raw_events
+        .iter()
+        .filter(|e| e.is_recurring())
+        .map(|e| e.id)
+        .collect();
+    let exceptions_map = state
+        .event_repo
+        .find_exceptions_batch(tenant.tenant_id, &recurring_ids)
+        .await?;
+
     let mut all_instances = Vec::new();
     for event in &raw_events {
-        let exceptions = if event.is_recurring() {
-            state
-                .event_repo
-                .find_exceptions(tenant.tenant_id, event.id)
-                .await?
-        } else {
-            Vec::new()
-        };
+        let exceptions = exceptions_map
+            .get(&event.id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
 
-        let instances = crate::domain::services::expand_recurrence(event, &range, &exceptions)?;
+        let instances = crate::domain::services::expand_recurrence(event, &range, exceptions)?;
         all_instances.extend(instances);
     }
 
@@ -231,6 +252,7 @@ pub async fn patch_event(
     Path(id): Path<Uuid>,
     Json(cmd): Json<UpdateEventCommand>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_events_write(&tenant)?;
     let use_case = UpdateEventUseCase::new(state.calendar_repo.clone(), state.event_repo.clone());
     let updated = use_case.execute(tenant.tenant_id, id, cmd).await?;
     Ok(Json(ApiResponse::ok(updated)))
@@ -255,6 +277,7 @@ pub async fn delete_event(
     tenant: TenantContext,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, AppError> {
+    require_events_write(&tenant)?;
     let use_case = DeleteEventUseCase::new(state.event_repo.clone());
     use_case.execute(tenant.tenant_id, id).await?;
 
@@ -283,7 +306,9 @@ pub async fn create_event_exception(
     Path(id): Path<Uuid>,
     Json(cmd): Json<CreateEventExceptionCommand>,
 ) -> Result<impl IntoResponse, AppError> {
-    let use_case = CreateEventExceptionUseCase::new(state.event_repo.clone());
+    require_events_write(&tenant)?;
+    let use_case = CreateEventExceptionUseCase::new(state.event_repo.clone())
+        .with_calendar_repo(state.calendar_repo.clone());
     let exception = use_case.execute(tenant.tenant_id, id, cmd).await?;
 
     let response = ApiResponse::created(exception, "Event exception created successfully");

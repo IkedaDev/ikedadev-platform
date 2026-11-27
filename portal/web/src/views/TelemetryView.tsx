@@ -106,11 +106,12 @@ export function TelemetryView() {
   const [metrics, setMetrics] = useState<TelemetryMetricsSummary | null>(null);
   const [events, setEvents] = useState<TelemetryEvent[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [metricsLoading, setMetricsLoading] = useState(true);
+  const [eventsLoading, setEventsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const loadMetrics = useCallback(async () => {
+    setMetricsLoading(true);
     setError(null);
     try {
       const now = new Date();
@@ -118,24 +119,43 @@ export function TelemetryView() {
       const to = now.toISOString();
       const kind = kindFilter === 'ALL' ? undefined : kindFilter;
 
-      const [summary, eventsPage] = await Promise.all([
-        bffClient.getTelemetryMetrics({ from, to, kind }),
-        bffClient.listTelemetryEvents({ page, limit: 20, kind }),
-      ]);
-
+      const summary = await bffClient.getTelemetryMetrics({ from, to, kind });
       setMetrics(summary);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No pudimos cargar las métricas de actividad.');
+    } finally {
+      setMetricsLoading(false);
+    }
+  }, [range, kindFilter]);
+
+  const loadEvents = useCallback(async () => {
+    setEventsLoading(true);
+    setError(null);
+    try {
+      const kind = kindFilter === 'ALL' ? undefined : kindFilter;
+      const eventsPage = await bffClient.listTelemetryEvents({ page, limit: 20, kind });
       setEvents(eventsPage.data ?? []);
       setPagination(eventsPage.pagination ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No pudimos cargar el historial de actividad.');
     } finally {
-      setLoading(false);
+      setEventsLoading(false);
     }
-  }, [range, kindFilter, page]);
+  }, [kindFilter, page]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void loadMetrics();
+  }, [loadMetrics]);
+
+  useEffect(() => {
+    void loadEvents();
+  }, [loadEvents]);
+
+  const load = useCallback(() => {
+    void Promise.all([loadMetrics(), loadEvents()]);
+  }, [loadMetrics, loadEvents]);
+
+  const loading = metricsLoading || eventsLoading;
 
   const handleKindChange = (next: KindFilter) => {
     setKindFilter(next);
@@ -144,7 +164,6 @@ export function TelemetryView() {
 
   const handleRangeChange = (next: DateRangeOption) => {
     setRange(next);
-    setPage(1);
   };
 
   const breakdown = metrics?.by_event_name ?? [];
@@ -261,21 +280,21 @@ export function TelemetryView() {
           value={metrics?.total_events ?? 0}
           icon={<Activity size={18} />}
           helper={RANGE_LABELS[range]}
-          isLoading={loading}
+          isLoading={metricsLoading}
         />
         <StatCard
           label="Clientes involucrados"
           value={metrics?.unique_clients ?? 0}
           icon={<Users size={18} />}
           helper="Con actividad registrada"
-          isLoading={loading}
+          isLoading={metricsLoading}
         />
         <StatCard
           label="Sesiones activas"
           value={metrics?.unique_sessions ?? 0}
           icon={<Fingerprint size={18} />}
           helper="Sesiones registradas en el período"
-          isLoading={loading}
+          isLoading={metricsLoading}
         />
         <StatCard
           label="Acción más frecuente"
@@ -288,7 +307,7 @@ export function TelemetryView() {
           helper={
             topEvent ? `${topEvent.count} veces registrada` : 'Aún no hay actividad registrada'
           }
-          isLoading={loading}
+          isLoading={metricsLoading}
         />
       </div>
 
@@ -302,7 +321,7 @@ export function TelemetryView() {
           <StatusBadge label={`${breakdown.length} tipos`} tone="blue" />
         </div>
 
-        {loading ? (
+        {metricsLoading ? (
           <div className="stack-sm">
             <Skeleton variant="line" />
             <Skeleton variant="line" />
@@ -358,7 +377,7 @@ export function TelemetryView() {
           columns={columns}
           data={events}
           rowKey={(ev) => ev.id}
-          isLoading={loading}
+          isLoading={eventsLoading}
           toolbar={
             <div className="tabs">
               {(['ALL', 'TRACKING', 'AUDIT'] as KindFilter[]).map((k) => (

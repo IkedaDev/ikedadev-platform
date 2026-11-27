@@ -35,7 +35,7 @@ RUN useradd -u 10001 -U -s /bin/sh appuser
 
 ENV PORT=8081 \
     HOST=0.0.0.0 \
-    RUST_LOG=info,crm_api=debug,tower_http=info
+    RUST_LOG=info,sqlx=warn,tower_http=info
 
 COPY --from=builder /app/target/release/crm-api /app/crm-api
 COPY --from=builder /app/services/crm-api/migrations /app/migrations

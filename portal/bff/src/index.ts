@@ -11,7 +11,7 @@ import { eventsClient } from './clients/eventsClient.js';
 import { UpstreamApiError } from './clients/http.js';
 import { identityClient } from './clients/identityClient.js';
 import { telemetryClient } from './clients/telemetryClient.js';
-import { config } from './config.js';
+import { config, parseAllowedOrigins, resolveCorsOrigin } from './config.js';
 import { requireAuth } from './middleware/auth.js';
 import { requestIdMiddleware } from './middleware/requestId.js';
 import { authRoutes } from './routes/auth.js';
@@ -26,22 +26,14 @@ import { telemetryRoutes } from './routes/telemetry.js';
 
 const app = new Hono();
 
-const allowedOrigins = config.CORS_ORIGIN.split(',')
-  .map((o) => o.trim())
-  .filter(Boolean);
+const allowedOrigins = parseAllowedOrigins(config.CORS_ORIGIN);
 
 app.use('*', requestIdMiddleware);
 app.use('*', logger());
 app.use(
   '*',
   cors({
-    origin: (origin) => {
-      if (!origin) return allowedOrigins[0] ?? '*';
-      if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
-        return origin;
-      }
-      return '';
-    },
+    origin: (origin) => resolveCorsOrigin(origin, allowedOrigins),
     allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Request-Id'],
     exposeHeaders: ['X-Request-Id'],

@@ -84,6 +84,7 @@ async function request<T>(
     body?: unknown;
     query?: Record<string, string | number | undefined>;
     silent?: boolean;
+    skipUnauthorizedHandler?: boolean;
   },
 ): Promise<T> {
   const url = new URL(`${BASE_URL}${path}`);
@@ -138,7 +139,12 @@ async function request<T>(
       typeof data?.code === 'string' ? data.code : undefined,
       data?.details ?? data?.errors,
     );
-    if (res.status === 401 && path.startsWith('/api/') && unauthorizedHandler) {
+    if (
+      res.status === 401 &&
+      path.startsWith('/api/') &&
+      !options?.skipUnauthorizedHandler &&
+      unauthorizedHandler
+    ) {
       unauthorizedHandler();
     }
     notifyIfHandledStatus(apiErr, options?.silent);
@@ -172,11 +178,17 @@ export const bffClient = {
   health: () => request<BffHealth>('GET', '/health', { silent: true }),
 
   // Tenant Settings & Public Branding
-  getSettings: async (opts?: { silent?: boolean }): Promise<TenantSettingsResponse> => {
+  getSettings: async (opts?: {
+    silent?: boolean;
+    skipUnauthorizedHandler?: boolean;
+  }): Promise<TenantSettingsResponse> => {
     const res = await request<TenantSettingsResponse | { success: boolean; data: TenantSettingsResponse }>(
       'GET',
       '/api/settings',
-      { silent: opts?.silent ?? true },
+      {
+        silent: opts?.silent ?? true,
+        skipUnauthorizedHandler: opts?.skipUnauthorizedHandler,
+      },
     );
     return unwrapData(res);
   },

@@ -54,39 +54,49 @@ echo ">>> [init-databases] Creating dedicated NOBYPASSRLS application role (iked
 APP_DB_USER="${IKEDA_APP_USER:-ikeda_app}"
 APP_DB_PASSWORD="${IKEDA_APP_PASSWORD:-ikeda_app_password}"
 
-psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
-    DO \$\$
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+    -v app_user="$APP_DB_USER" \
+    -v app_password="$APP_DB_PASSWORD" <<-'EOSQL'
+    SELECT set_config('init.app_user', :'app_user', false);
+    SELECT set_config('init.app_password', :'app_password', false);
+    DO $$
+    DECLARE
+        v_user TEXT := current_setting('init.app_user');
+        v_pass TEXT := current_setting('init.app_password');
     BEGIN
-        IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '${APP_DB_USER}') THEN
+        IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = v_user) THEN
             EXECUTE format(
                 'CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS',
-                '${APP_DB_USER}',
-                '${APP_DB_PASSWORD}'
+                v_user,
+                v_pass
             );
         ELSE
             EXECUTE format(
                 'ALTER ROLE %I WITH LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS',
-                '${APP_DB_USER}',
-                '${APP_DB_PASSWORD}'
+                v_user,
+                v_pass
             );
         END IF;
     END
-    \$\$;
+    $$;
 EOSQL
 
 grant_app_privileges() {
     db_name="$1"
     echo ">>> [init-databases] Granting least-privilege NOBYPASSRLS access on $db_name to $APP_DB_USER..."
-    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$db_name" <<-EOSQL
-        GRANT CONNECT ON DATABASE "${db_name}" TO "${APP_DB_USER}";
-        GRANT USAGE ON SCHEMA public TO "${APP_DB_USER}";
-        GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO "${APP_DB_USER}";
-        GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "${APP_DB_USER}";
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$db_name" \
+        -v db_name="$db_name" \
+        -v app_user="$APP_DB_USER" <<-'EOSQL'
+        GRANT CONNECT ON DATABASE :"db_name" TO :"app_user";
+        GRANT USAGE ON SCHEMA public TO :"app_user";
+        GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO :"app_user";
+        GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO :"app_user";
         ALTER DEFAULT PRIVILEGES IN SCHEMA public
-            GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "${APP_DB_USER}";
+            GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO :"app_user";
         ALTER DEFAULT PRIVILEGES IN SCHEMA public
-            GRANT USAGE, SELECT ON SEQUENCES TO "${APP_DB_USER}";
-        DO \$\$
+            GRANT USAGE, SELECT ON SEQUENCES TO :"app_user";
+        SELECT set_config('init.app_user', :'app_user', false);
+        DO $$
         BEGIN
             IF EXISTS (
                 SELECT 1
@@ -94,10 +104,13 @@ grant_app_privileges() {
                 JOIN pg_namespace n ON n.oid = p.pronamespace
                 WHERE n.nspname = 'public' AND p.proname = 'authenticate_api_key'
             ) THEN
-                EXECUTE 'GRANT EXECUTE ON FUNCTION public.authenticate_api_key(VARCHAR) TO "${APP_DB_USER}"';
+                EXECUTE format(
+                    'GRANT EXECUTE ON FUNCTION public.authenticate_api_key(VARCHAR) TO %I',
+                    current_setting('init.app_user')
+                );
             END IF;
         END
-        \$\$;
+        $$;
 EOSQL
 }
 

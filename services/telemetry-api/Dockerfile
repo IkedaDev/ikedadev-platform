@@ -35,7 +35,7 @@ RUN useradd -u 10001 -U -s /bin/sh appuser
 
 ENV PORT=8085 \
     HOST=0.0.0.0 \
-    RUST_LOG=info,telemetry_api=debug,tower_http=info
+    RUST_LOG=info,sqlx=warn,tower_http=info
 
 COPY --from=builder /app/target/release/telemetry-api /app/telemetry-api
 COPY --from=builder /app/services/telemetry-api/migrations /app/migrations

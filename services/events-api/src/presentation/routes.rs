@@ -9,6 +9,7 @@ use crate::domain::models::{
     AvailabilityResult, Calendar, Event, EventException, EventInstance, EventStatus, TimeRange,
 };
 use axum::{
+    extract::DefaultBodyLimit,
     routing::{get, post},
     Router,
 };
@@ -140,5 +141,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/events/{id}/exceptions", post(create_event_exception))
         // Swagger UI
         .merge(SwaggerUi::new("/swagger-ui").url("/openapi.json", ApiDoc::openapi()))
+        .layer(DefaultBodyLimit::max(256 * 1024))
         .with_state(state)
 }

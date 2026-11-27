@@ -547,3 +547,135 @@ async fn test_create_event_exception_use_case() {
         .await;
     assert!(fail_res.is_err());
 }
+
+#[tokio::test]
+async fn test_availability_rejects_excessive_date_range() {
+    let cal_repo = Arc::new(MockCalendarRepository::default());
+    let event_repo = Arc::new(MockEventRepository::default());
+    let tenant_id = Uuid::new_v4();
+    let cal = Calendar::new(tenant_id, "Room", "UTC", false, None);
+    cal_repo.create(tenant_id, &cal).await.unwrap();
+
+    let now = Utc::now();
+    let use_case = CheckAvailabilityUseCase::new(cal_repo, event_repo);
+    let err = use_case
+        .execute(
+            tenant_id,
+            CheckAvailabilityQuery {
+                calendar_id: cal.id,
+                range: TimeRange::new(now, now + Duration::days(365)).unwrap(),
+                slot_duration_minutes: Some(30),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::BadRequest(_)));
+}
+
+#[tokio::test]
+async fn test_create_event_rejects_invalid_rrule_and_allows_idempotent_retry_on_strict_calendar() {
+    let cal_repo = Arc::new(MockCalendarRepository::default());
+    let event_repo = Arc::new(MockEventRepository::default());
+    let tenant_id = Uuid::new_v4();
+    let strict_cal = Calendar::new(tenant_id, "Strict Room", "UTC", false, None);
+    cal_repo.create(tenant_id, &strict_cal).await.unwrap();
+
+    let use_case = CreateEventUseCase::new(cal_repo, event_repo);
+    let now = Utc::now();
+
+    // Invalid RRULE rejected with 400
+    let bad_rrule = CreateEventCommand {
+        calendar_id: strict_cal.id,
+        title: "Poison".to_string(),
+        description: None,
+        starts_at: now + Duration::hours(1),
+        ends_at: now + Duration::hours(2),
+        timezone: None,
+        rrule: Some("INVALID_GARBAGE".to_string()),
+        status: None,
+        external_resource_id: None,
+        metadata: None,
+    };
+    assert!(matches!(
+        use_case.execute(tenant_id, bad_rrule).await,
+        Err(AppError::BadRequest(_))
+    ));
+
+    // Idempotent retry on strict calendar succeeds instead of 409
+    let idem_cmd = CreateEventCommand {
+        calendar_id: strict_cal.id,
+        title: "Idempotent Slot".to_string(),
+        description: None,
+        starts_at: now + Duration::hours(3),
+        ends_at: now + Duration::hours(4),
+        timezone: None,
+        rrule: None,
+        status: None,
+        external_resource_id: Some("idem-key-strict-1".to_string()),
+        metadata: None,
+    };
+    let first = use_case.execute(tenant_id, idem_cmd.clone()).await.unwrap();
+    let second = use_case.execute(tenant_id, idem_cmd).await.unwrap();
+    assert_eq!(first.id, second.id);
+}
+
+#[tokio::test]
+async fn test_reschedule_exception_rejects_overlap_on_strict_calendar() {
+    let cal_repo = Arc::new(MockCalendarRepository::default());
+    let event_repo = Arc::new(MockEventRepository::default());
+    let tenant_id = Uuid::new_v4();
+    let strict_cal = Calendar::new(tenant_id, "Strict Room", "UTC", false, None);
+    cal_repo.create(tenant_id, &strict_cal).await.unwrap();
+
+    let now = Utc::now();
+    let recurring = Event::new(
+        tenant_id,
+        strict_cal.id,
+        "Daily Standup",
+        None,
+        TimeRange::new(now, now + Duration::minutes(30)).unwrap(),
+        "UTC",
+        Some("FREQ=DAILY;COUNT=5".to_string()),
+        EventStatus::Confirmed,
+        None,
+        serde_json::json!({}),
+    );
+    event_repo.create(tenant_id, &recurring).await.unwrap();
+
+    // Existing event occupying day 2, +2h..+3h
+    let blocker = Event::new(
+        tenant_id,
+        strict_cal.id,
+        "Blocker",
+        None,
+        TimeRange::new(
+            now + Duration::days(2) + Duration::hours(2),
+            now + Duration::days(2) + Duration::hours(3),
+        )
+        .unwrap(),
+        "UTC",
+        None,
+        EventStatus::Confirmed,
+        None,
+        serde_json::json!({}),
+    );
+    event_repo.create(tenant_id, &blocker).await.unwrap();
+
+    let uc = CreateEventExceptionUseCase::new(event_repo).with_calendar_repo(cal_repo);
+    let err = uc
+        .execute(
+            tenant_id,
+            recurring.id,
+            CreateEventExceptionCommand {
+                original_starts_at: now + Duration::days(2),
+                is_cancelled: false,
+                rescheduled_starts_at: Some(now + Duration::days(2) + Duration::hours(2)),
+                rescheduled_ends_at: Some(
+                    now + Duration::days(2) + Duration::hours(2) + Duration::minutes(30),
+                ),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::Conflict(_)));
+}
